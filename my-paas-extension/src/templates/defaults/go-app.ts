@@ -1,0 +1,36 @@
+import type { ServiceTemplate } from '../../shared/types';
+
+const template: ServiceTemplate = {
+  id: 'go-app',
+  name: 'Go App',
+  icon: 'code',
+  category: 'app',
+  defaults: {
+    name: 'go-app',
+    ports: ['8080:8080'],
+    environment: {},
+    volumes: [],
+    build: { context: './', dockerfile: 'Dockerfile' },
+    restart: 'unless-stopped',
+  },
+  files: [
+    {
+      path: 'Dockerfile',
+      content: `FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app/server .
+
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=builder /app/server .
+EXPOSE 8080
+CMD ["./server"]
+`,
+    },
+  ],
+};
+
+export default template;

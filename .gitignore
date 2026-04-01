@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+my-paas-extension/dist/
+my-paas-extension/webview/dist/
+*.vsix
+
+# vscode
+.vscode/
+
+# Go
+core/mypaas-core
+core/mypaas-core.exe
+
+# IDE
+.vscode/settings.json
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Env
+.env
+.env.local
+
+# Logs
+*.log

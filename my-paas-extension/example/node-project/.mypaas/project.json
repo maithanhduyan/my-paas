@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "name": "my-project",
+  "nodes": [
+    {
+      "id": "nodejs-app-1",
+      "templateId": "",
+      "position": {
+        "x": 115.00615111533881,
+        "y": 143.64147474180243
+      },
+      "data": {
+        "name": "app",
+        "build": {
+          "context": "./",
+          "dockerfile": "Dockerfile"
+        },
+        "ports": [
+          "3000:3000"
+        ],
+        "environment": {
+          "NODE_ENV": "production"
+        },
+        "volumes": [],
+        "restart": "unless-stopped"
+      }
+    }
+  ],
+  "edges": [],
+  "volumeNodes": []
+}

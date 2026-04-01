@@ -1,0 +1,137 @@
+{
+  "name": "my-paas",
+  "displayName": "My PaaS - Docker Visual Designer",
+  "description": "Drag & drop Docker service designer with auto docker-compose generation",
+  "version": "0.1.0",
+  "publisher": "my-paas",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "docker",
+    "docker-compose",
+    "container",
+    "paas",
+    "drag-drop"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "myPaas.openCanvas",
+        "title": "My PaaS: Open Canvas",
+        "icon": "$(window)"
+      },
+      {
+        "command": "myPaas.composeUp",
+        "title": "My PaaS: Compose Up"
+      },
+      {
+        "command": "myPaas.composeDown",
+        "title": "My PaaS: Compose Down"
+      },
+      {
+        "command": "myPaas.generateCompose",
+        "title": "My PaaS: Generate docker-compose.yml"
+      },
+      {
+        "command": "myPaas.addTemplate",
+        "title": "Add to Canvas",
+        "icon": "$(add)"
+      },
+      {
+        "command": "myPaas.refreshServices",
+        "title": "Refresh Services",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "myPaas.detectApp",
+        "title": "My PaaS: Auto Detect App",
+        "icon": "$(search)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "myPaas",
+          "title": "My PaaS",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "myPaas": [
+        {
+          "id": "myPaas.services",
+          "name": "Services"
+        },
+        {
+          "id": "myPaas.templates",
+          "name": "Templates"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "myPaas.services",
+        "contents": "No services found.\n[Open Canvas](command:myPaas.openCanvas) to start designing."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "myPaas.openCanvas",
+          "when": "view == myPaas.services",
+          "group": "navigation"
+        },
+        {
+          "command": "myPaas.refreshServices",
+          "when": "view == myPaas.services",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run build",
+    "build": "bun run build:core && bun run build:extension && bun run build:webview",
+    "build:core": "cd ../core && go build -o ../my-paas-extension/dist/mypaas-core.exe ./cmd/",
+    "build:core:win-x64": "cd ../core && GOOS=windows GOARCH=amd64 go build -o ../my-paas-extension/dist/mypaas-core.exe ./cmd/",
+    "build:core:win-arm64": "cd ../core && GOOS=windows GOARCH=arm64 go build -o ../my-paas-extension/dist/mypaas-core.exe ./cmd/",
+    "build:core:linux-x64": "cd ../core && GOOS=linux GOARCH=amd64 go build -o ../my-paas-extension/dist/mypaas-core ./cmd/",
+    "build:core:linux-arm64": "cd ../core && GOOS=linux GOARCH=arm64 go build -o ../my-paas-extension/dist/mypaas-core ./cmd/",
+    "build:core:darwin-x64": "cd ../core && GOOS=darwin GOARCH=amd64 go build -o ../my-paas-extension/dist/mypaas-core ./cmd/",
+    "build:core:darwin-arm64": "cd ../core && GOOS=darwin GOARCH=arm64 go build -o ../my-paas-extension/dist/mypaas-core ./cmd/",
+    "build:extension": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:dockerode --format=cjs --platform=node --sourcemap",
+    "build:webview": "cd webview && bun run build",
+    "watch": "bun run build:extension -- --watch",
+    "dev:webview": "cd webview && bun run dev",
+    "lint": "eslint src --ext ts",
+    "install:all": "bun install && cd webview && bun install",
+    "package": "bunx @vscode/vsce package",
+    "package:win-x64": "bun run build:core:win-x64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target win32-x64",
+    "package:win-arm64": "bun run build:core:win-arm64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target win32-arm64",
+    "package:linux-x64": "bun run build:core:linux-x64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target linux-x64",
+    "package:linux-arm64": "bun run build:core:linux-arm64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target linux-arm64",
+    "package:darwin-x64": "bun run build:core:darwin-x64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target darwin-x64",
+    "package:darwin-arm64": "bun run build:core:darwin-arm64 && bun run build:extension && bun run build:webview && bunx @vscode/vsce package --target darwin-arm64",
+    "package:all": "bun run package:win-x64 && bun run package:win-arm64 && bun run package:linux-x64 && bun run package:linux-arm64 && bun run package:darwin-x64 && bun run package:darwin-arm64",
+    "publish": "bun run package:all && bunx @vscode/vsce publish --packagePath *.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.0",
+    "yaml": "^2.3.0"
+  }
+}
