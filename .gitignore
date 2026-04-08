@@ -9,6 +9,9 @@ my-paas-extension/webview/dist/
 # vscode
 .vscode/
 
+# playwright
+.playwright-mcp/
+.profile/
 # Go
 core/mypaas-core
 core/mypaas-core.exe

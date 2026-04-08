@@ -6,6 +6,12 @@
 
 My PaaS is a VS Code extension that lets you visually design multi-container Docker applications on an interactive canvas, then generate and manage `docker-compose.yml` — no YAML editing required.
 
+**Key Techniques for Graceful Deployments & Zero Downtime Deploy:**
+- `stop_grace_period`: Define how long Docker waits before killing a container after sending a SIGTERM.
+- `Healthchecks`: Ensure new containers are fully running and passing checks before the old ones stop.
+- `docker-rollout` Plugin: Use the wowu/docker-rollout tool for zero-downtime updates with native Docker Compose commands.
+- `Blue-Green Deployment`: Run two sets of services and use a reverse proxy (like Caddy or Nginx) to toggle traffic between them, ensuring the old version runs until the new one is live
+
 ```
 my-paas/
 ├── core/                  # Go CLI — auto-detect & Dockerfile generation
