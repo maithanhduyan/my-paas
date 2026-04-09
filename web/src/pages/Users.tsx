@@ -205,9 +205,16 @@ export function Users() {
                 </div>
                 <div className="flex items-center gap-2">
                   {!inv.used && (
-                    <code className="text-xs bg-surface px-2 py-1 rounded border border-surface-300 max-w-[200px] truncate">
-                      {inv.token}
-                    </code>
+                    <button
+                      onClick={() => {
+                        const url = `${window.location.origin}/register/${inv.token}`
+                        navigator.clipboard.writeText(url)
+                      }}
+                      className="text-xs bg-surface px-2 py-1 rounded border border-surface-300 hover:border-accent transition-colors max-w-[200px] truncate"
+                      title="Click to copy registration link"
+                    >
+                      📋 Copy link
+                    </button>
                   )}
                   <span className={`text-xs px-2 py-0.5 rounded ${inv.used ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'}`}>
                     {inv.used ? 'Used' : 'Active'}

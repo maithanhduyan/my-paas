@@ -47,9 +47,13 @@ func (h *Handler) DeleteService(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "service not found"})
 	}
 
-	// Stop container if running
+	// Stop container/service if running
 	if svc.ContainerID != "" {
-		h.Docker.StopContainer(c.Context(), svc.ContainerID)
+		if h.Docker.IsSwarmActive(c.Context()) {
+			h.Docker.RemoveSwarmService(c.Context(), svc.ContainerID)
+		} else {
+			h.Docker.StopContainer(c.Context(), svc.ContainerID)
+		}
 	}
 
 	if err := h.Store.DeleteService(id); err != nil {
@@ -75,6 +79,48 @@ func (h *Handler) StartService(c *fiber.Ctx) error {
 
 	containerName := "mypaas-svc-" + svc.Name
 
+	// Pull image first
+	if err := h.Docker.PullImage(c.Context(), svc.Image); err != nil {
+		h.Store.UpdateServiceStatus(id, "error", "")
+		return c.Status(500).JSON(fiber.Map{"error": "failed to pull image: " + err.Error()})
+	}
+
+	labels := map[string]string{
+		"mypaas.service": svc.ID,
+		"mypaas.type":    string(svc.Type),
+	}
+
+	// Swarm mode: deploy as Swarm service
+	if h.Docker.IsSwarmActive(c.Context()) {
+		// Stop old if exists
+		existing, _ := h.Docker.FindSwarmServiceByName(c.Context(), containerName)
+		if existing != nil {
+			h.Docker.RemoveSwarmService(c.Context(), existing.ID)
+		}
+
+		envMap := make(map[string]string)
+		for k, v := range defaultEnv {
+			envMap[k] = v
+		}
+
+		serviceID, err := h.Docker.CreateSwarmService(c.Context(), docker.SwarmServiceOpts{
+			Name:     containerName,
+			Image:    svc.Image,
+			Env:      envMap,
+			Labels:   labels,
+			Network:  serviceNetwork,
+			Replicas: 1,
+		})
+		if err != nil {
+			h.Store.UpdateServiceStatus(id, "error", "")
+			return c.Status(500).JSON(fiber.Map{"error": "failed to start: " + err.Error()})
+		}
+
+		h.Store.UpdateServiceStatus(id, "running", serviceID)
+		return c.JSON(fiber.Map{"message": "service started (swarm)", "service_id": serviceID})
+	}
+
+	// Container mode
 	// Stop old container if exists
 	if svc.ContainerID != "" {
 		h.Docker.StopContainer(c.Context(), svc.ContainerID)
@@ -85,22 +131,13 @@ func (h *Handler) StartService(c *fiber.Ctx) error {
 		h.Docker.StopContainer(c.Context(), oldID)
 	}
 
-	// Pull image first
-	if err := h.Docker.PullImage(c.Context(), svc.Image); err != nil {
-		h.Store.UpdateServiceStatus(id, "error", "")
-		return c.Status(500).JSON(fiber.Map{"error": "failed to pull image: " + err.Error()})
-	}
-
 	containerID, err := h.Docker.RunContainer(c.Context(), docker.RunContainerOpts{
 		Name:    containerName,
 		Image:   svc.Image,
 		Env:     defaultEnv,
 		Ports:   []string{port},
 		Network: serviceNetwork,
-		Labels: map[string]string{
-			"mypaas.service": svc.ID,
-			"mypaas.type":    string(svc.Type),
-		},
+		Labels:  labels,
 	})
 	if err != nil {
 		h.Store.UpdateServiceStatus(id, "error", "")
@@ -120,7 +157,12 @@ func (h *Handler) StopService(c *fiber.Ctx) error {
 	}
 
 	if svc.ContainerID != "" {
-		h.Docker.StopContainer(c.Context(), svc.ContainerID)
+		if h.Docker.IsSwarmActive(c.Context()) {
+			// In Swarm mode, ContainerID stores the Swarm service ID
+			h.Docker.RemoveSwarmService(c.Context(), svc.ContainerID)
+		} else {
+			h.Docker.StopContainer(c.Context(), svc.ContainerID)
+		}
 	}
 
 	h.Store.UpdateServiceStatus(id, "stopped", "")

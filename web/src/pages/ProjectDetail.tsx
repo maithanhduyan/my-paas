@@ -3,19 +3,20 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getProject, listDeployments, getEnvVars,
   triggerDeploy, deleteProject, rollbackDeployment,
-  getProjectStats, listDomains, addDomain, deleteDomain, updateProject
+  getProjectStats, listDomains, addDomain, deleteDomain, updateProject,
+  listVolumes, createVolume, deleteVolume
 } from '../api'
-import type { Project, Deployment, EnvVar, ContainerStats, Domain } from '../types'
+import type { Project, Deployment, EnvVar, ContainerStats, Domain, Volume } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { LogViewer } from '../components/LogViewer'
 import { EnvEditor } from '../components/EnvEditor'
 import { timeAgo, duration } from '../lib/utils'
 import {
   ArrowLeft, Rocket, Trash2, GitBranch, Clock,
-  ChevronDown, ChevronUp, RotateCcw, Cpu, HardDrive, Copy, Check, Globe
+  ChevronDown, ChevronUp, RotateCcw, Cpu, HardDrive, Copy, Check, Globe, Database, Plus
 } from 'lucide-react'
 
-type Tab = 'deployments' | 'env' | 'settings'
+type Tab = 'deployments' | 'env' | 'volumes' | 'settings'
 
 export function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
@@ -34,6 +35,9 @@ export function ProjectDetail() {
   const [cpuLimit, setCpuLimit] = useState(0)
   const [memLimit, setMemLimit] = useState(0)
   const [replicas, setReplicas] = useState(0)
+  const [volumes, setVolumes] = useState<Volume[]>([])
+  const [newVolName, setNewVolName] = useState('')
+  const [newVolPath, setNewVolPath] = useState('')
 
   const load = useCallback(async () => {
     if (!id) return
@@ -50,6 +54,7 @@ export function ProjectDetail() {
       setMemLimit(p.mem_limit || 0)
       setReplicas(p.replicas || 0)
       listDomains(id).then(setDomains).catch(() => {})
+      listVolumes(id).then(setVolumes).catch(() => {})
       getProjectStats(id).then((s) => {
         if (s && 'cpu_percent' in s) setProjectStats(s)
       }).catch(() => {})
@@ -86,6 +91,20 @@ export function ProjectDetail() {
     if (!id) return
     await deleteDomain(domainId)
     listDomains(id).then(setDomains).catch(() => {})
+  }
+
+  const handleAddVolume = async () => {
+    if (!id || !newVolName.trim() || !newVolPath.trim()) return
+    await createVolume(id, newVolName.trim(), newVolPath.trim())
+    setNewVolName('')
+    setNewVolPath('')
+    listVolumes(id).then(setVolumes).catch(() => {})
+  }
+
+  const handleDeleteVolume = async (volumeId: string) => {
+    if (!id || !confirm('Delete this volume? Data may be lost.')) return
+    await deleteVolume(id, volumeId)
+    listVolumes(id).then(setVolumes).catch(() => {})
   }
 
   const handleSaveResources = async () => {
@@ -156,7 +175,7 @@ export function ProjectDetail() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-surface-300">
-        {(['deployments', 'env', 'settings'] as Tab[]).map((t) => (
+        {(['deployments', 'env', 'volumes', 'settings'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -166,7 +185,7 @@ export function ProjectDetail() {
                 : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            {t === 'deployments' ? `Deployments (${deployments.length})` : t === 'env' ? `Env Vars (${envVars.length})` : 'Settings'}
+            {t === 'deployments' ? `Deployments (${deployments.length})` : t === 'env' ? `Env Vars (${envVars.length})` : t === 'volumes' ? `Volumes (${volumes.length})` : 'Settings'}
           </button>
         ))}
       </div>
@@ -226,6 +245,65 @@ export function ProjectDetail() {
 
       {tab === 'env' && (
         <EnvEditor projectId={project.id} envVars={envVars} onUpdate={load} />
+      )}
+
+      {tab === 'volumes' && (
+        <div className="space-y-4">
+          <div className="bg-surface-50 border border-surface-300 rounded-lg p-4">
+            <h3 className="text-sm font-medium text-gray-300 mb-3">Add Volume</h3>
+            <div className="flex gap-2">
+              <input
+                value={newVolName}
+                onChange={(e) => setNewVolName(e.target.value)}
+                placeholder="Volume name (e.g. uploads)"
+                className="flex-1 px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <input
+                value={newVolPath}
+                onChange={(e) => setNewVolPath(e.target.value)}
+                placeholder="Mount path (e.g. /app/uploads)"
+                className="flex-1 px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <button
+                onClick={handleAddVolume}
+                disabled={!newVolName.trim() || !newVolPath.trim()}
+                className="flex items-center gap-1 px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent-hover disabled:opacity-50 transition-colors"
+              >
+                <Plus className="w-4 h-4" /> Add
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Volumes persist data across deploys. A Docker volume <code className="text-gray-400">mypaas-{'{name}'}-{'{vol}'}</code> will be created and mounted at the specified path.
+            </p>
+          </div>
+
+          {volumes.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Database className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              No volumes configured. Add a volume to persist data between deployments.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {volumes.map((v) => (
+                <div key={v.id} className="flex items-center justify-between bg-surface-50 border border-surface-300 rounded-lg p-3">
+                  <div className="flex items-center gap-3">
+                    <Database className="w-4 h-4 text-accent" />
+                    <div>
+                      <span className="text-sm font-medium">{v.name}</span>
+                      <span className="text-xs text-gray-500 ml-2 font-mono">{v.mount_path}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteVolume(v.id)}
+                    className="text-danger hover:text-danger/80 p-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'settings' && (

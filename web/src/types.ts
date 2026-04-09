@@ -177,9 +177,19 @@ export interface UpdateProjectInput {
   replicas?: number
 }
 
+export interface Sample {
+  id: string
+  name: string
+  description: string
+  language: string
+  icon: string
+  git_url: string
+}
+
 export interface SwarmStatus {
   active: boolean
   nodes: SwarmNode[]
+  manager_addr?: string
 }
 
 export interface SwarmNode {
@@ -188,4 +198,21 @@ export interface SwarmNode {
   status: string
   role: string
   addr: string
+}
+
+export interface SwarmService {
+  id: string
+  name: string
+  image: string
+  replicas: number
+  tasks: SwarmTask[]
+  labels: Record<string, string>
+}
+
+export interface SwarmTask {
+  id: string
+  node_id: string
+  node_name: string
+  state: string
+  message: string
 }

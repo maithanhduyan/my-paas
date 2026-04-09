@@ -1,0 +1,12 @@
+{
+  "name": "sample-node-app",
+  "version": "1.0.0",
+  "description": "Sample Node.js Express application for My PaaS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

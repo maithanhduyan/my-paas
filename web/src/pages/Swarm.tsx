@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { getSwarmStatus, initSwarm, getSwarmToken } from '../api'
-import type { SwarmStatus } from '../types'
-import { Server, Wifi, WifiOff, Copy, Check } from 'lucide-react'
+import { getSwarmStatus, initSwarm, getSwarmToken, getSwarmServices } from '../api'
+import type { SwarmStatus, SwarmService } from '../types'
+import { Server, Wifi, WifiOff, Copy, Check, Box, RefreshCw } from 'lucide-react'
 
 export function Swarm() {
   const [status, setStatus] = useState<SwarmStatus | null>(null)
+  const [services, setServices] = useState<SwarmService[]>([])
   const [loading, setLoading] = useState(true)
   const [initAddr, setInitAddr] = useState('')
   const [joinToken, setJoinToken] = useState('')
@@ -15,6 +16,10 @@ export function Swarm() {
     try {
       const s = await getSwarmStatus()
       setStatus(s)
+      if (s.active) {
+        const svc = await getSwarmServices()
+        setServices(svc || [])
+      }
     } catch {
       setStatus({ active: false, nodes: [] })
     } finally {
@@ -58,6 +63,15 @@ export function Swarm() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Swarm Cluster</h1>
         <div className="flex items-center gap-2">
+          {status?.active && (
+            <button
+              onClick={load}
+              className="p-1.5 text-gray-400 hover:text-gray-200 border border-surface-300 rounded transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
           {status?.active ? (
             <span className="flex items-center gap-1.5 text-sm text-success">
               <Wifi className="w-4 h-4" /> Active
@@ -139,6 +153,64 @@ export function Swarm() {
             </div>
           </div>
 
+          {/* Swarm Services */}
+          <div>
+            <h2 className="text-sm font-medium text-gray-300 mb-2">
+              Services ({services.length})
+            </h2>
+            {services.length === 0 ? (
+              <div className="bg-surface-50 border border-surface-300 rounded-lg p-4 text-center text-sm text-gray-500">
+                No Swarm services running. Deploy a project to see it here.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {services.map((svc) => (
+                  <div
+                    key={svc.id}
+                    className="bg-surface-50 border border-surface-300 rounded-lg p-3"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Box className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm font-medium">{svc.name}</span>
+                      </div>
+                      <span className="text-xs text-gray-500">
+                        {svc.tasks.filter(t => t.state === 'running').length}/{svc.replicas} replicas
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2 truncate">
+                      {svc.image}
+                    </div>
+                    {svc.tasks.length > 0 && (
+                      <div className="space-y-1">
+                        {svc.tasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className="flex items-center justify-between text-xs bg-surface border border-surface-300 rounded px-2 py-1"
+                          >
+                            <span className="text-gray-400 font-mono">
+                              {task.id.substring(0, 12)}
+                            </span>
+                            <span className="text-gray-300">
+                              {task.node_name || task.node_id.substring(0, 12)}
+                            </span>
+                            <span className={
+                              task.state === 'running' ? 'text-success' :
+                              task.state === 'pending' || task.state === 'preparing' || task.state === 'starting' ? 'text-warning' :
+                              'text-danger'
+                            }>
+                              {task.state}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Join Token */}
           <div>
             <h2 className="text-sm font-medium text-gray-300 mb-2">Worker Join Token</h2>
@@ -165,6 +237,11 @@ export function Swarm() {
                 >
                   Show Token
                 </button>
+              )}
+              {status.manager_addr && (
+                <p className="text-xs text-gray-500">
+                  Manager: <code className="text-gray-400">{status.manager_addr}</code>
+                </p>
               )}
             </div>
           </div>

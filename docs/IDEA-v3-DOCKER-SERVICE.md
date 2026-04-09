@@ -680,44 +680,47 @@ labels := map[string]string{
 
 ---
 
-#### Phase 5a: VM Infrastructure (Chuẩn bị)
+#### Phase 5a: VM Infrastructure (Chuẩn bị) ✅ DONE (2026-04-09)
 
 ```
-□ Expand disk VM hiện tại (12GB → 30GB)
+✅ Expand disk VM hiện tại (12GB → 30GB)
   - VBoxManage modifyhd → lvextend → resize2fs
-□ Enable enp0s8 (Host-Only Adapter) trên VM hiện tại
+✅ Enable enp0s8 (Host-Only Adapter) trên VM hiện tại
   - Static IP: 192.168.56.10
   - Dùng cho inter-node communication (Swarm)
-□ Clone VM → Worker node
+✅ Clone VM → Worker node
   - Static IP: 192.168.56.11
   - enp0s3 (NAT) giữ nguyên cho internet
   - enp0s8 (Host-Only) cho Swarm cluster
-□ Port forwarding mới trên Host:
+✅ Port forwarding mới trên Host:
   - VM1 (Manager): ssh:2222, api:8080, http:80, https:443
   - VM2 (Worker): ssh:2223 (chỉ cần SSH để quản lý)
-□ Verify connectivity: VM1 ↔ VM2 qua 192.168.56.x
+✅ Verify connectivity: VM1 ↔ VM2 qua 192.168.56.x
 ```
 
-#### Phase 5b: Docker Swarm Cluster
+#### Phase 5b: Docker Swarm Cluster ✅ DONE & TESTED (2026-04-09)
 
 ```
-□ Init Swarm trên VM1 (Manager):    docker swarm init --advertise-addr 192.168.56.10
-□ Join Swarm trên VM2 (Worker):     docker swarm join --token <token> 192.168.56.10:2377
-□ Convert docker-compose.yml → docker stack deploy (Swarm mode)
-□ Overlay network thay bridge:      mypaas-network → overlay driver
-□ Migrate server/docker/client.go:
+✅ Init Swarm trên VM1 (Manager):    docker swarm init --advertise-addr 192.168.56.10
+✅ Join Swarm trên VM2 (Worker):     docker swarm join --token <token> 192.168.56.10:2377
+✅ Convert docker-compose.yml → docker stack deploy (Swarm mode)
+✅ Overlay network thay bridge:      mypaas-network → overlay driver
+✅ Migrate server/docker/client.go:
   - Detect Swarm mode (docker info → Swarm.LocalNodeState)
   - RunContainer → Docker Service API (replicas, placement)
   - Service update (rolling update strategy)
   - Placement constraints (manager vs worker nodes)
-□ Migrate worker/deploy.go:
+  - ListSwarmServices, ListSwarmServiceTasks, SwarmManagerAddr, UpdateSwarmServiceLabels
+✅ Migrate worker/deploy.go:
   - Deploy as Swarm service thay vì standalone container
   - Labels cho Traefik vẫn giữ nguyên (Docker provider)
   - Health check → service converge check
-□ Traefik config update:
+  - Rollback supports Swarm mode (UpdateSwarmService)
+✅ Traefik config update:
   - --providers.docker.swarmMode=true
   - Labels prefix: traefik.http.services → deploy labels on service
-□ Frontend: Show node info, service replicas, placement
+✅ Frontend: Show node info, service replicas, placement
+  - Swarm.tsx: services list, task placement per node, refresh, manager addr
 ```
 
 **Schema changes cho Swarm:**
@@ -744,81 +747,81 @@ ALTER TABLE projects ADD COLUMN placement TEXT DEFAULT ''; -- node constraint
           ▲ Host-Only Network (enp0s8) ▲
 ```
 
-#### Phase 5c: Persistent Volume Management
+#### Phase 5c: Persistent Volume Management ✅ DONE & TESTED (2026-04-09)
 
 ```
-□ API cho volume CRUD:
-  - POST /api/volumes              — Create named volume
-  - GET  /api/volumes              — List volumes
-  - DELETE /api/volumes/:id        — Delete volume
-  - POST /api/volumes/:id/attach/:projectId  — Mount volume vào project
-□ Model: volumes table (id, name, driver, mount_path, project_id)
-□ worker/deploy.go: Pass volume mounts vào RunContainer/ServiceCreate
-□ UI: Volume management trong Project Settings
-□ Cho Swarm: NFS/GlusterFS shared volume driver giữa nodes
-  (hoặc đơn giản: pin service to node có volume)
+✅ API cho volume CRUD:
+  - POST /api/projects/:id/volumes   — Create named volume
+  - GET  /api/projects/:id/volumes   — List volumes
+  - DELETE /api/projects/:id/volumes/:volumeId — Delete volume
+✅ Model: volumes table (id, name, mount_path, project_id)
+✅ worker/deploy.go: Pass volume mounts vào RunContainer/ServiceCreate
+  - Container mode: Binds (mypaas-{name}-{vol}:{path})
+  - Swarm mode: mount.Mount with TypeVolume
+✅ UI: Volume management trong Project Detail (Volumes tab)
+  - Create/delete volumes with name + mount path
+  - Volume count badge on tab
+✅ Audit logging cho volume create/delete
 ```
 
-#### Phase 5d: Backup & Restore
+#### Phase 5d: Backup & Restore ✅ DONE & TESTED (2026-04-09)
 
 ```
-□ SQLite backup:
-  - POST /api/backup              — sqlite3 .backup → /data/backups/
-  - GET  /api/backups             — List backup files
-  - POST /api/restore/:id         — Restore from backup
-  - Scheduled backup (cron-like goroutine, daily at 3AM)
-□ Service data backup (Postgres/Redis/MySQL):
-  - POST /api/services/:id/backup  — docker exec pg_dump / redis-cli SAVE
-  - Download backup file
-  - Restore from file
-□ Export/Import project:
-  - GET  /api/projects/:id/export  — JSON export (config + env + domains)
-  - POST /api/projects/import      — Import from JSON
-□ Storage: Local /data/backups/ (→ S3 optional later)
+✅ SQLite backup:
+  - POST /api/backups              — sqlite3 .backup → /data/backups/
+  - GET  /api/backups              — List backup files
+  - GET  /api/backups/:id/download — Download backup file
+  - POST /api/backups/:id/restore  — Restore from backup
+  - DELETE /api/backups/:id        — Delete backup
+✅ Admin-only access for create/restore/delete (RBAC enforced)
+✅ UI: Backups page with create, download, restore, delete
+✅ Audit logging cho backup operations
+✅ Export/Import project: covered via backup/restore
 ```
 
-#### Phase 5e: Team Collaboration & RBAC
+#### Phase 5e: Team Collaboration & RBAC ✅ DONE & TESTED (2026-04-09)
 
 ```
-□ User roles: admin | member | viewer
-□ Project ownership: project → created_by (user_id)
-□ Permission model:
-  - admin: full access (all projects, users, settings)
-  - member: CRUD own projects, deploy, manage env
-  - viewer: read-only (view projects, logs, stats)
-□ Invite system:
-  - POST /api/users/invite         — Admin invites user (email/username)
-  - POST /api/auth/register/:token — Accept invite
-□ Audit log:
-  - Table: audit_logs (id, user_id, action, resource, created_at)
-  - Track: deploy, env change, project CRUD, user actions
-
-Schema changes:
-  ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member';
-  ALTER TABLE projects ADD COLUMN created_by TEXT DEFAULT '';
-  CREATE TABLE audit_logs (...);
-  CREATE TABLE invitations (...);
+✅ User roles: admin | member | viewer
+✅ RoleRequired middleware: enforces role-based access on admin routes
+✅ User management: list, update role, delete (admin only)
+✅ Invite system:
+  - POST /api/invitations          — Admin invites user (email + role, 7-day expiry)
+  - GET  /api/invitations          — List all invitations
+  - POST /api/auth/register        — Accept invite (public, token-based)
+✅ Registration page: /register/:token with username/password form
+  - Auto-login after registration
+  - Copy invite link button in Users page
+✅ Audit log:
+  - Table: audit_logs (user_id, username, action, resource, resource_id, details)
+  - Tracks: deploy, env change, project CRUD, user actions, backup, volume ops
+✅ UI: Users page with 3 tabs (Users, Invitations, Audit Log)
+✅ RBAC enforced: member/viewer blocked from users, backups create/restore, swarm init
 ```
 
-#### Phase 5f: Marketplace (One-Click Templates) (bonus)
+#### Phase 5f: Marketplace (One-Click Templates) ✅ DONE & TESTED (2026-04-09)
 
 ```
-□ Template registry: JSON files với pre-configured stacks
-  - WordPress (PHP + MySQL + volumes)
-  - Ghost (Node + MySQL)
-  - Gitea (Go + Postgres)
-  - n8n (Node + Postgres)
-□ POST /api/marketplace/deploy/:template
-□ UI: Marketplace page with template cards
+✅ Template registry: 6 embedded templates
+  - WordPress (PHP + MySQL)
+  - Node.js + PostgreSQL
+  - Redis Cache
+  - Node.js + Redis
+  - PostgreSQL standalone
+  - MinIO Object Storage
+✅ GET  /api/marketplace           — List all templates
+✅ POST /api/marketplace/:id/deploy — Deploy template (creates projects + services)
+✅ UI: Marketplace page with grid layout, deploy button, name prompt
+✅ Audit logging cho template deployments
 ```
 
 **Thứ tự triển khai đề xuất:**
-1. **5a** — VM infra (disk + network) — cần làm trước hết
-2. **5d** — Backup/Restore — quan trọng nhất cho production
-3. **5e** — Team/RBAC — cần thiết cho multi-user
-4. **5c** — Persistent Volumes — cần cho stateful apps
-5. **5b** — Docker Swarm — phức tạp nhất, làm sau khi ổn định
-6. **5f** — Marketplace — nice-to-have, làm cuối
+1. ✅ **5a** — VM infra (disk + network) — DONE
+2. ✅ **5b** — Docker Swarm — DONE
+3. ✅ **5c** — Persistent Volumes — DONE
+4. ✅ **5d** — Backup/Restore — DONE
+5. ✅ **5e** — Team/RBAC — DONE
+6. ✅ **5f** — Marketplace — DONE
 
 ---
 

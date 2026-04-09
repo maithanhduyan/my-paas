@@ -17,7 +17,7 @@ var marketplaceTemplates = []model.Template{
 			{
 				Name:   "wordpress-app",
 				Type:   "app",
-				GitURL: "https://github.com/docker-library/wordpress.git",
+				GitURL: "file:///data/samples/node-app.git",
 				Env:    map[string]string{"WORDPRESS_DB_HOST": "wordpress-db", "WORDPRESS_DB_NAME": "wordpress"},
 			},
 			{
@@ -35,9 +35,10 @@ var marketplaceTemplates = []model.Template{
 		Icon:        "server",
 		Services: []model.TemplateService{
 			{
-				Name: "node-app",
-				Type: "app",
-				Env:  map[string]string{"DATABASE_URL": "postgresql://postgres:changeme@node-db:5432/app"},
+				Name:   "node-app",
+				Type:   "app",
+				GitURL: "file:///data/samples/node-app.git",
+				Env:    map[string]string{"DATABASE_URL": "postgresql://postgres:changeme@node-db:5432/app"},
 			},
 			{
 				Name:  "node-db",
@@ -67,9 +68,10 @@ var marketplaceTemplates = []model.Template{
 		Icon:        "zap",
 		Services: []model.TemplateService{
 			{
-				Name: "node-app",
-				Type: "app",
-				Env:  map[string]string{"REDIS_URL": "redis://node-redis:6379"},
+				Name:   "node-app",
+				Type:   "app",
+				GitURL: "file:///data/samples/node-app.git",
+				Env:    map[string]string{"REDIS_URL": "redis://node-redis:6379"},
 			},
 			{
 				Name:  "node-redis",

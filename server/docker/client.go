@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,21 +49,20 @@ func (c *Client) Ping(ctx context.Context) error {
 // It writes the Dockerfile to the build context before building.
 // logFn receives build output lines in real-time.
 func (c *Client) BuildImage(ctx context.Context, contextDir string, dockerfile string, imageTag string, cacheFrom []string, logFn func(string)) error {
+	// Write Dockerfile directly into the build context directory
+	dockerfilePath := filepath.Join(contextDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0o644); err != nil {
+		return fmt.Errorf("write dockerfile: %w", err)
+	}
+	defer os.Remove(dockerfilePath)
+
 	tar, err := archive.TarWithOptions(contextDir, &archive.TarOptions{})
 	if err != nil {
 		return fmt.Errorf("tar context: %w", err)
 	}
 	defer tar.Close()
 
-	// Inject Dockerfile into the tar stream
-	dockerfileTar, err := archive.Generate("Dockerfile", dockerfile)
-	if err != nil {
-		return fmt.Errorf("generate dockerfile: %w", err)
-	}
-
-	buildContext := io.MultiReader(dockerfileTar, tar)
-
-	resp, err := c.cli.ImageBuild(ctx, buildContext, types.ImageBuildOptions{
+	resp, err := c.cli.ImageBuild(ctx, tar, types.ImageBuildOptions{
 		Tags:        []string{imageTag},
 		Dockerfile:  "Dockerfile",
 		Remove:      true,
@@ -373,6 +374,9 @@ func (c *Client) CreateSwarmService(ctx context.Context, opts SwarmServiceOpts) 
 				Env:   envList,
 				Mounts: opts.Mounts,
 			},
+			Placement: &swarm.Placement{
+				Constraints: []string{"node.role == manager"},
+			},
 		},
 		Mode: swarm.ServiceMode{
 			Replicated: &swarm.ReplicatedService{
@@ -433,6 +437,24 @@ func (c *Client) UpdateSwarmService(ctx context.Context, serviceID string, image
 	return err
 }
 
+// UpdateSwarmServiceLabels updates labels on a Swarm service (used for Traefik routing).
+func (c *Client) UpdateSwarmServiceLabels(ctx context.Context, serviceID string, labels map[string]string) error {
+	svc, _, err := c.cli.ServiceInspectWithRaw(ctx, serviceID, types.ServiceInspectOptions{})
+	if err != nil {
+		return err
+	}
+
+	if svc.Spec.Labels == nil {
+		svc.Spec.Labels = make(map[string]string)
+	}
+	for k, v := range labels {
+		svc.Spec.Labels[k] = v
+	}
+
+	_, err = c.cli.ServiceUpdate(ctx, serviceID, svc.Version, svc.Spec, types.ServiceUpdateOptions{})
+	return err
+}
+
 // RemoveSwarmService removes a Swarm service.
 func (c *Client) RemoveSwarmService(ctx context.Context, serviceID string) error {
 	return c.cli.ServiceRemove(ctx, serviceID)
@@ -462,12 +484,19 @@ func (c *Client) SwarmServiceHealthy(ctx context.Context, serviceID string, time
 		if err != nil {
 			return err
 		}
-		for _, task := range tasks {
-			if task.Status.State == swarm.TaskStateRunning {
+		// Find the most recent task by creation time
+		var latest *swarm.Task
+		for i := range tasks {
+			if latest == nil || tasks[i].CreatedAt.After(latest.CreatedAt) {
+				latest = &tasks[i]
+			}
+		}
+		if latest != nil {
+			if latest.Status.State == swarm.TaskStateRunning {
 				return nil
 			}
-			if task.Status.State == swarm.TaskStateFailed || task.Status.State == swarm.TaskStateRejected {
-				return fmt.Errorf("service task %s: %s", task.Status.State, task.Status.Err)
+			if latest.Status.State == swarm.TaskStateFailed || latest.Status.State == swarm.TaskStateRejected {
+				return fmt.Errorf("service task %s: %s", latest.Status.State, latest.Status.Err)
 			}
 		}
 		time.Sleep(2 * time.Second)
@@ -478,6 +507,36 @@ func (c *Client) SwarmServiceHealthy(ctx context.Context, serviceID string, time
 // ListSwarmNodes returns all Swarm nodes.
 func (c *Client) ListSwarmNodes(ctx context.Context) ([]swarm.Node, error) {
 	return c.cli.NodeList(ctx, types.NodeListOptions{})
+}
+
+// ListSwarmServices returns all Swarm services.
+func (c *Client) ListSwarmServices(ctx context.Context) ([]swarm.Service, error) {
+	return c.cli.ServiceList(ctx, types.ServiceListOptions{})
+}
+
+// ListSwarmServiceTasks returns tasks for a specific Swarm service.
+func (c *Client) ListSwarmServiceTasks(ctx context.Context, serviceID string) ([]swarm.Task, error) {
+	return c.cli.TaskList(ctx, types.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("service", serviceID)),
+	})
+}
+
+// SwarmManagerAddr returns the advertise address of the current Swarm manager.
+func (c *Client) SwarmManagerAddr(ctx context.Context) (string, error) {
+	sw, err := c.cli.SwarmInspect(ctx)
+	if err != nil {
+		return "", err
+	}
+	nodes, err := c.cli.NodeList(ctx, types.NodeListOptions{})
+	if err != nil {
+		return sw.ID, nil
+	}
+	for _, n := range nodes {
+		if n.ManagerStatus != nil && n.ManagerStatus.Leader {
+			return n.ManagerStatus.Addr, nil
+		}
+	}
+	return "", nil
 }
 
 func (c *Client) ensureOverlayNetwork(ctx context.Context, name string) {

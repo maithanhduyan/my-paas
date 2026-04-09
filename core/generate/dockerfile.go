@@ -110,7 +110,7 @@ func getDependencyFiles(bp *plan.BuildPlan) []string {
 	case "node":
 		return []string{"package*.json"}
 	case "golang":
-		return []string{"go.mod go.sum ./"}
+		return []string{"go.mod go.sum* ./"}
 	case "python":
 		return []string{"requirements*.txt pyproject.toml* uv.lock* ./"}
 	case "rust":
@@ -167,7 +167,9 @@ func getCopyInstructions(bp *plan.BuildPlan) []string {
 		}
 	case "python":
 		return []string{
+			"COPY --from=builder /opt/venv /opt/venv",
 			"COPY --from=builder /app .",
+			"ENV PATH=\"/opt/venv/bin:$PATH\"",
 		}
 	case "php":
 		return []string{

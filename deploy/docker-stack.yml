@@ -1,0 +1,69 @@
+## Docker Stack file for Swarm deployment
+## Usage:
+##   1. Build image: docker compose -f deploy/docker-compose.yml build
+##   2. Deploy stack: docker stack deploy -c deploy/docker-stack.yml mypaas
+##   3. Remove stack: docker stack rm mypaas
+
+services:
+  mypaas:
+    image: deploy-mypaas:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mypaas-data:/data
+    environment:
+      - MYPAAS_DB=/data/mypaas.db
+      - MYPAAS_LISTEN=:8080
+      - MYPAAS_DOMAIN=${MYPAAS_DOMAIN:-}
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.mypaas.rule=PathPrefix(`/`)"
+        - "traefik.http.routers.mypaas.entrypoints=web"
+        - "traefik.http.routers.mypaas.priority=1"
+        - "traefik.http.services.mypaas.loadbalancer.server.port=8080"
+    networks:
+      - mypaas-network
+
+  traefik:
+    image: traefik:v2.11
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOCKER_API_VERSION=1.45
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/certs
+    command:
+      - --providers.docker=true
+      - --providers.docker.swarmMode=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=mypaas-network
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/certs/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --api.dashboard=false
+      - --log.level=WARN
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    networks:
+      - mypaas-network
+
+networks:
+  mypaas-network:
+    name: mypaas-network
+    driver: overlay
+    attachable: true
+
+volumes:
+  mypaas-data:
+  traefik-certs:

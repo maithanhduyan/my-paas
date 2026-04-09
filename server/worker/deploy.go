@@ -237,6 +237,8 @@ func (w *DeployWorker) deploySwarmService(ctx context.Context, deployID string, 
 			w.Store.UpdateProjectStatus(projectID, "failed")
 			return
 		}
+		// Update labels on existing service
+		w.Docker.UpdateSwarmServiceLabels(ctx, existing.ID, labels)
 	} else {
 		w.logStep(deployID, "deploy", "info", "creating Swarm service: "+serviceName)
 		replicas := project.Replicas
@@ -309,10 +311,6 @@ func (w *DeployWorker) rollback(ctx context.Context, job Job) {
 	}
 
 	w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployDeploying)
-	containerName := fmt.Sprintf("mypaas-%s-%s", project.Name, rollbackDeploy.ID)
-
-	// Stop current container
-	oldContainerID := w.findProjectContainer(ctx, project.Name)
 
 	envVars, _ := w.Store.GetEnvVars(projectID)
 	envMap := make(map[string]string)
@@ -341,30 +339,60 @@ func (w *DeployWorker) rollback(ctx context.Context, job Job) {
 		memLimit = project.MemLimit * 1024 * 1024
 	}
 
-	containerID, err := w.Docker.RunContainer(ctx, docker.RunContainerOpts{
-		Name:     containerName,
-		Image:    target.ImageTag,
-		Env:      envMap,
-		Network:  networkName,
-		Labels:   labels,
-		CPULimit: cpuLimit,
-		MemLimit: memLimit,
-	})
-	if err != nil {
-		w.logStep(rollbackDeploy.ID, "rollback", "error", err.Error())
-		w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
-		return
-	}
+	// Swarm mode: update existing service with the old image
+	if w.Docker.IsSwarmActive(ctx) {
+		serviceName := fmt.Sprintf("mypaas-%s", project.Name)
+		existing, _ := w.Docker.FindSwarmServiceByName(ctx, serviceName)
+		if existing != nil {
+			w.logStep(rollbackDeploy.ID, "rollback", "info", "rolling back Swarm service to "+target.ImageTag)
+			err := w.Docker.UpdateSwarmService(ctx, existing.ID, target.ImageTag, project.Replicas, envMap)
+			if err != nil {
+				w.logStep(rollbackDeploy.ID, "rollback", "error", "failed to update service: "+err.Error())
+				w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
+				return
+			}
+			// Wait for service to converge
+			err = w.Docker.SwarmServiceHealthy(ctx, existing.ID, 90*time.Second)
+			if err != nil {
+				w.logStep(rollbackDeploy.ID, "rollback", "error", "health check failed: "+err.Error())
+				w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
+				return
+			}
+		} else {
+			w.logStep(rollbackDeploy.ID, "rollback", "error", "Swarm service not found: "+serviceName)
+			w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
+			return
+		}
+	} else {
+		// Container mode: stop old, start new
+		containerName := fmt.Sprintf("mypaas-%s-%s", project.Name, rollbackDeploy.ID)
+		oldContainerID := w.findProjectContainer(ctx, project.Name)
 
-	err = w.Docker.HealthCheck(ctx, containerID, 30*time.Second)
-	if err != nil {
-		w.Docker.StopContainer(ctx, containerID)
-		w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
-		return
-	}
+		containerID, err := w.Docker.RunContainer(ctx, docker.RunContainerOpts{
+			Name:     containerName,
+			Image:    target.ImageTag,
+			Env:      envMap,
+			Network:  networkName,
+			Labels:   labels,
+			CPULimit: cpuLimit,
+			MemLimit: memLimit,
+		})
+		if err != nil {
+			w.logStep(rollbackDeploy.ID, "rollback", "error", err.Error())
+			w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
+			return
+		}
 
-	if oldContainerID != "" {
-		w.Docker.StopContainer(ctx, oldContainerID)
+		err = w.Docker.HealthCheck(ctx, containerID, 30*time.Second)
+		if err != nil {
+			w.Docker.StopContainer(ctx, containerID)
+			w.Store.UpdateDeploymentStatus(rollbackDeploy.ID, model.DeployFailed)
+			return
+		}
+
+		if oldContainerID != "" {
+			w.Docker.StopContainer(ctx, oldContainerID)
+		}
 	}
 
 	w.Store.UpdateDeploymentImage(rollbackDeploy.ID, target.ImageTag)

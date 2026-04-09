@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createProject } from '../api'
-import { GitBranch, Globe, ArrowLeft } from 'lucide-react'
+import { createProject, listSamples } from '../api'
+import { GitBranch, Globe, ArrowLeft, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import type { Sample } from '../types'
 
 export function NewProject() {
   const navigate = useNavigate()
@@ -11,6 +12,27 @@ export function NewProject() {
   const [branch, setBranch] = useState('main')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [samples, setSamples] = useState<Sample[]>([])
+  const [selectedSample, setSelectedSample] = useState<string | null>(null)
+
+  useEffect(() => {
+    listSamples().then(setSamples).catch(() => {})
+  }, [])
+
+  const pickSample = (s: Sample) => {
+    setSelectedSample(s.id)
+    setName(s.id)
+    setGitUrl(s.git_url)
+    setBranch('main')
+    setError('')
+  }
+
+  const clearSample = () => {
+    setSelectedSample(null)
+    setName('')
+    setGitUrl('')
+    setBranch('main')
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,6 +58,47 @@ export function NewProject() {
       </Link>
 
       <h1 className="text-2xl font-bold mb-6">New Project</h1>
+
+      {samples.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-accent" />
+            Quick Start — Sample Projects
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {samples.map(s => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => pickSample(s)}
+                className={`text-left p-3 rounded-lg border transition-colors ${
+                  selectedSample === s.id
+                    ? 'border-accent bg-accent/10'
+                    : 'border-surface-300 bg-surface-100 hover:border-gray-500'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">{s.icon}</span>
+                  <span className="text-sm font-medium">{s.name}</span>
+                </div>
+                <p className="text-xs text-gray-500">{s.description}</p>
+              </button>
+            ))}
+          </div>
+          {selectedSample && (
+            <button type="button" onClick={clearSample}
+              className="mt-2 text-xs text-gray-500 hover:text-gray-300">
+              ✕ Clear selection
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-px flex-1 bg-surface-300" />
+        <span className="text-xs text-gray-500">{selectedSample ? 'or customize' : 'From Git Repository'}</span>
+        <div className="h-px flex-1 bg-surface-300" />
+      </div>
 
       <form onSubmit={submit} className="space-y-4">
         <div>

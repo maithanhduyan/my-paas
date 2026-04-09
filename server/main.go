@@ -161,6 +161,9 @@ func main() {
 	protected.Get("/marketplace", h.ListTemplates)
 	protected.Post("/marketplace/:id/deploy", h.DeployTemplate)
 
+	// Samples
+	protected.Get("/samples", h.ListSamples)
+
 	// --- Admin routes ---
 	admin := protected.Group("", middleware.RoleRequired("admin"))
 	admin.Get("/users", h.ListUsers)
@@ -172,6 +175,7 @@ func main() {
 
 	// --- Swarm routes ---
 	protected.Get("/swarm/status", h.SwarmStatus)
+	protected.Get("/swarm/services", h.SwarmServices)
 	admin.Post("/swarm/init", h.SwarmInit)
 	admin.Get("/swarm/token", h.SwarmToken)
 

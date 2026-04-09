@@ -1,4 +1,4 @@
-import type { Project, CreateProjectInput, UpdateProjectInput, Deployment, EnvVar, HealthResponse, Service, ServiceType, ContainerStats, Domain, AuthStatus, Backup, User, AuditLog, Invitation, Volume, Template, SwarmStatus } from './types'
+import type { Project, CreateProjectInput, UpdateProjectInput, Deployment, EnvVar, HealthResponse, Service, ServiceType, ContainerStats, Domain, AuthStatus, Backup, User, AuditLog, Invitation, Volume, Template, SwarmStatus, SwarmService, Sample } from './types'
 
 const BASE = '/api'
 
@@ -151,8 +151,12 @@ export const deployTemplate = (id: string, name?: string) =>
     method: 'POST', body: JSON.stringify({ name: name ?? '' })
   })
 
+// Samples
+export const listSamples = () => request<Sample[]>('/samples')
+
 // Swarm
 export const getSwarmStatus = () => request<SwarmStatus>('/swarm/status')
+export const getSwarmServices = () => request<SwarmService[]>('/swarm/services')
 export const initSwarm = (advertiseAddr?: string) =>
   request<{ message: string }>('/swarm/init', {
     method: 'POST', body: JSON.stringify({ advertise_addr: advertiseAddr ?? '' })

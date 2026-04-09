@@ -48,13 +48,13 @@ func (p *PythonProvider) Plan(a *app.App) (*plan.BuildPlan, error) {
 
 	switch pkgMgr {
 	case "uv":
-		bp.InstallCmd = "pip install uv && uv sync --frozen"
+		bp.InstallCmd = "python -m venv /opt/venv && /opt/venv/bin/pip install uv && /opt/venv/bin/uv sync --frozen"
 	case "poetry":
-		bp.InstallCmd = "pip install poetry && poetry install --no-dev --no-interaction"
+		bp.InstallCmd = "python -m venv /opt/venv && /opt/venv/bin/pip install poetry && /opt/venv/bin/poetry install --no-dev --no-interaction"
 	case "pipenv":
-		bp.InstallCmd = "pip install pipenv && pipenv install --deploy --system"
+		bp.InstallCmd = "python -m venv /opt/venv && /opt/venv/bin/pip install pipenv && /opt/venv/bin/pipenv install --deploy --system"
 	default:
-		bp.InstallCmd = "pip install --no-cache-dir -r requirements.txt"
+		bp.InstallCmd = "python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt"
 	}
 
 	bp.StartCmd = getStartCommand(a, framework)
