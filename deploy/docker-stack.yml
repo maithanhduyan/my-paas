@@ -15,7 +15,7 @@ services:
     environment:
       - MYPAAS_DB=/data/mypaas.db
       - MYPAAS_LISTEN=:8080
-      - MYPAAS_DOMAIN=${MYPAAS_DOMAIN:-}
+      - MYPAAS_DOMAIN=${MYPAAS_DOMAIN:-192.168.56.10.sslip.io}
     deploy:
       placement:
         constraints:

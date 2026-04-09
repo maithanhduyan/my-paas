@@ -1,124 +1,23 @@
-import { useCallback, useEffect, useState, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   getProject, listDeployments, getEnvVars,
-  triggerDeploy, deleteProject, rollbackDeployment,
-  getProjectStats, listDomains, addDomain, deleteDomain, updateProject,
-  listVolumes, createVolume, deleteVolume,
-  restartProject, stopProject, startProject
+  triggerDeploy, deleteProject,
+  getProjectStats, listDomains,
+  listVolumes,
+  restartProject, stopProject, startProject,
+  unlinkService, startService, stopService,
 } from '../api'
-import type { Project, Deployment, EnvVar, ContainerStats, Domain, Volume } from '../types'
-import { StatusBadge } from '../components/StatusBadge'
+import type { Project, Deployment, EnvVar, ContainerStats, Domain, Volume, Service } from '../types'
+import { ProjectCanvas } from '../components/flow/ProjectCanvas'
+import { ActivitySidebar } from '../components/flow/ActivitySidebar'
+import { ServiceDrawer, AppDrawer } from '../components/flow/Drawers'
 import { LogViewer } from '../components/LogViewer'
-import { EnvEditor } from '../components/EnvEditor'
-import { ProjectArchitecture } from '../components/ProjectArchitecture'
-import { timeAgo, duration } from '../lib/utils'
+import { useToast } from '../components/ui/Toast'
 import {
-  ArrowLeft, Rocket, Trash2, GitBranch, Clock,
-  ChevronDown, ChevronUp, RotateCcw, Cpu, HardDrive, Copy, Check, Globe, Database, Plus,
-  ExternalLink, AlertTriangle, Loader2, MoreVertical, Play, Square, RefreshCw
+  ArrowLeft, Rocket, GitBranch, Loader2, Play, Square, RefreshCw,
+  Trash2, AlertTriangle, Settings, ChevronRight,
 } from 'lucide-react'
-
-type Tab = 'deployments' | 'architecture' | 'env' | 'volumes' | 'settings'
-
-/* ─── Deployment Status Badge (ACTIVE / REMOVED / building etc) ─── */
-function DeployBadge({ status, isActive }: { status: string; isActive: boolean }) {
-  if (isActive && status === 'healthy') {
-    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-success/20 text-success border border-success/30 rounded">Active</span>
-  }
-  if (status === 'healthy') {
-    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-surface-200 text-gray-500 border border-surface-300 rounded">Removed</span>
-  }
-  if (status === 'failed') {
-    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-danger/20 text-danger border border-danger/30 rounded">Failed</span>
-  }
-  if (status === 'rolled_back') {
-    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-warning/20 text-warning border border-warning/30 rounded">Rolled back</span>
-  }
-  // building/deploying/queued
-  return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded animate-pulse">{status}</span>
-}
-
-/* ─── 3-dot Action Menu ─── */
-function ActionMenu({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [onClose])
-  return (
-    <div ref={ref} className="absolute right-0 top-full mt-1 z-20 bg-surface-100 border border-surface-300 rounded-lg shadow-xl py-1 min-w-[160px]">
-      {children}
-    </div>
-  )
-}
-function MenuItem({ icon: Icon, label, onClick, danger }: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string; onClick: () => void; danger?: boolean
-}) {
-  return (
-    <button onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-surface-200 transition-colors ${danger ? 'text-danger' : 'text-gray-300'}`}>
-      <Icon className="w-3.5 h-3.5" />{label}
-    </button>
-  )
-}
-
-/* ─── Deployment Row ─── */
-function DeploymentRow({ d, isActive, expanded, onToggle, onRollback, onRedeploy, projectId }: {
-  d: Deployment; isActive: boolean; expanded: boolean
-  onToggle: () => void; onRollback: (id: string) => void; onRedeploy: () => void
-  projectId: string
-}) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  return (
-    <div className={`bg-surface-50 border rounded-lg overflow-hidden ${isActive ? 'border-success/30' : 'border-surface-300'}`}>
-      <div className="flex items-center gap-3 p-3">
-        <button onClick={onToggle} className="flex-1 flex items-center gap-3 text-left hover:bg-surface-100 transition-colors rounded -m-1 p-1">
-          <DeployBadge status={d.status} isActive={isActive} />
-          <div className="flex-1 min-w-0">
-            <span className="text-sm font-mono text-gray-300 truncate block">
-              {d.commit_hash ? `${d.commit_hash.slice(0, 7)} — ${d.commit_msg || 'No message'}` : d.id.slice(0, 8)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-gray-500 shrink-0">
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {d.started_at && d.finished_at ? duration(d.started_at, d.finished_at) : '—'}
-            </span>
-            <span>{timeAgo(d.created_at)}</span>
-            <span className="px-1.5 py-0.5 bg-surface-200 rounded text-xs">{d.trigger}</span>
-            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </div>
-        </button>
-        {/* 3-dot menu */}
-        <div className="relative">
-          <button onClick={() => setMenuOpen(!menuOpen)}
-            className="p-1.5 text-gray-500 hover:text-gray-300 hover:bg-surface-200 rounded transition-colors">
-            <MoreVertical className="w-4 h-4" />
-          </button>
-          {menuOpen && (
-            <ActionMenu onClose={() => setMenuOpen(false)}>
-              <MenuItem icon={ChevronDown} label="View logs" onClick={() => { onToggle(); setMenuOpen(false) }} />
-              <MenuItem icon={Rocket} label="Redeploy" onClick={() => { onRedeploy(); setMenuOpen(false) }} />
-              {d.status === 'healthy' && d.image_tag && (
-                <MenuItem icon={RotateCcw} label="Rollback to this" onClick={() => { onRollback(d.id); setMenuOpen(false) }} />
-              )}
-            </ActionMenu>
-          )}
-        </div>
-      </div>
-      {expanded && (
-        <div className="border-t border-surface-300 p-3">
-          <LogViewer deploymentId={d.id} projectId={projectId} />
-        </div>
-      )}
-    </div>
-  )
-}
 
 /* ─── Delete Confirmation Modal ─── */
 function DeleteModal({ projectName, onConfirm, onCancel }: {
@@ -128,41 +27,50 @@ function DeleteModal({ projectName, onConfirm, onCancel }: {
 }) {
   const [confirmText, setConfirmText] = useState('')
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onCancel}>
-      <div className="bg-surface-50 border border-surface-300 rounded-xl p-6 max-w-md w-full space-y-4" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 text-danger">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 text-red-600">
           <AlertTriangle className="w-5 h-5 shrink-0" />
           <h3 className="font-semibold text-lg">Delete Project</h3>
         </div>
-        <p className="text-sm text-gray-400">
-          This action <strong className="text-gray-200">cannot be undone</strong>. This will permanently delete the
-          project <strong className="text-gray-200">{projectName}</strong>, its deployments, and remove the Swarm service.
+        <p className="text-sm text-gray-500">
+          This action <strong className="text-gray-900">cannot be undone</strong>. This will permanently delete
+          <strong className="text-gray-900"> {projectName}</strong> and remove the Swarm service.
         </p>
         <div>
-          <label className="block text-sm text-gray-400 mb-1.5">
-            Type <strong className="text-gray-200 font-mono">{projectName}</strong> to confirm
+          <label className="block text-sm text-gray-500 mb-1.5">
+            Type <strong className="text-gray-900 font-mono">{projectName}</strong> to confirm
           </label>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={e => setConfirmText(e.target.value)}
-            placeholder={projectName}
-            autoFocus
-            className="w-full px-3 py-2 bg-surface border border-surface-300 rounded-lg text-sm
-                       focus:outline-none focus:ring-1 focus:ring-danger"
-          />
+          <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
+            placeholder={projectName} autoFocus
+            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400" />
         </div>
         <div className="flex justify-end gap-3">
-          <button onClick={onCancel}
-            className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 rounded-lg border border-surface-300 hover:bg-surface-200 transition-colors">
-            Cancel
-          </button>
-          <button onClick={onConfirm}
-            disabled={confirmText !== projectName}
-            className="px-4 py-2 text-sm text-white bg-danger rounded-lg hover:bg-danger/80
-                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+          <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={onConfirm} disabled={confirmText !== projectName}
+            className="px-4 py-2 text-sm text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
             Delete this project
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Log Viewer Modal ─── */
+function LogModal({ deploymentId, projectId, onClose }: {
+  deploymentId: string; projectId: string; onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-surface-50 border border-surface-300 rounded-2xl w-full max-w-3xl max-h-[80vh] overflow-hidden shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-surface-300">
+          <h3 className="text-sm font-semibold text-gray-200">Deployment Logs</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg">&times;</button>
+        </div>
+        <div className="p-4 max-h-[70vh] overflow-y-auto">
+          <LogViewer deploymentId={deploymentId} projectId={projectId} />
         </div>
       </div>
     </div>
@@ -172,24 +80,21 @@ function DeleteModal({ projectName, onConfirm, onCancel }: {
 export function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [project, setProject] = useState<Project | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [envVars, setEnvVars] = useState<EnvVar[]>([])
-  const [tab, setTab] = useState<Tab>('deployments')
   const [deploying, setDeploying] = useState(false)
-  const [expandedDeploy, setExpandedDeploy] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [projectStats, setProjectStats] = useState<ContainerStats | null>(null)
-  const [copied, setCopied] = useState(false)
   const [domains, setDomains] = useState<Domain[]>([])
-  const [newDomain, setNewDomain] = useState('')
-  const [cpuLimit, setCpuLimit] = useState(0)
-  const [memLimit, setMemLimit] = useState(0)
-  const [replicas, setReplicas] = useState(0)
   const [volumes, setVolumes] = useState<Volume[]>([])
-  const [newVolName, setNewVolName] = useState('')
-  const [newVolPath, setNewVolPath] = useState('')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+
+  // Side panel states
+  const [selectedService, setSelectedService] = useState<Service | null>(null)
+  const [showAppDrawer, setShowAppDrawer] = useState(false)
+  const [logDeploymentId, setLogDeploymentId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -202,9 +107,6 @@ export function ProjectDetail() {
       setProject(p)
       setDeployments(deps)
       setEnvVars(env)
-      setCpuLimit(p.cpu_limit || 0)
-      setMemLimit(p.mem_limit || 0)
-      setReplicas(p.replicas || 0)
       listDomains(id).then(setDomains).catch(() => {})
       listVolumes(id).then(setVolumes).catch(() => {})
       getProjectStats(id).then((s) => {
@@ -218,76 +120,31 @@ export function ProjectDetail() {
   }, [id, navigate])
 
   useEffect(() => { load() }, [load])
-
-  const handleRollback = async (deploymentId: string) => {
-    if (!confirm('Rollback to this deployment?')) return
-    await rollbackDeployment(deploymentId)
-    await load()
-  }
-
-  const webhookUrl = `${window.location.origin}/api/webhooks/github`
-  const copyWebhookUrl = () => {
-    navigator.clipboard.writeText(webhookUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const handleAddDomain = async () => {
-    if (!id || !newDomain.trim()) return
-    await addDomain(id, newDomain.trim())
-    setNewDomain('')
-    listDomains(id).then(setDomains).catch(() => {})
-  }
-
-  const handleDeleteDomain = async (domainId: string) => {
-    if (!id) return
-    await deleteDomain(domainId)
-    listDomains(id).then(setDomains).catch(() => {})
-  }
-
-  const handleAddVolume = async () => {
-    if (!id || !newVolName.trim() || !newVolPath.trim()) return
-    await createVolume(id, newVolName.trim(), newVolPath.trim())
-    setNewVolName('')
-    setNewVolPath('')
-    listVolumes(id).then(setVolumes).catch(() => {})
-  }
-
-  const handleDeleteVolume = async (volumeId: string) => {
-    if (!id || !confirm('Delete this volume? Data may be lost.')) return
-    await deleteVolume(id, volumeId)
-    listVolumes(id).then(setVolumes).catch(() => {})
-  }
-
-  const handleSaveResources = async () => {
-    if (!id) return
-    await updateProject(id, { cpu_limit: cpuLimit, mem_limit: memLimit, replicas })
-    await load()
-  }
+  // Poll deployments while building
+  useEffect(() => {
+    if (!deploying || !id) return
+    const interval = setInterval(async () => {
+      try {
+        const deps = await listDeployments(id)
+        setDeployments(deps)
+        const latest = deps[0]
+        if (latest && !['building', 'deploying', 'queued', 'cloning', 'detecting'].includes(latest.status)) {
+          setDeploying(false)
+          const p = await getProject(id)
+          setProject(p)
+        }
+      } catch { setDeploying(false) }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [deploying, id])
 
   const handleDeploy = async () => {
     if (!id) return
     setDeploying(true)
     try {
       const dep = await triggerDeploy(id)
-      // Auto-switch to deployments tab and expand the new deployment for live streaming
-      setTab('deployments')
-      setExpandedDeploy(dep.id)
+      setLogDeploymentId(dep.id)
       await load()
-      // Poll for completion so status updates in real-time
-      const pollInterval = setInterval(async () => {
-        try {
-          const deps = await listDeployments(id)
-          setDeployments(deps)
-          const latest = deps.find(d => d.id === dep.id)
-          if (latest && latest.status !== 'building' && latest.status !== 'deploying') {
-            clearInterval(pollInterval)
-            setDeploying(false)
-            const p = await getProject(id)
-            setProject(p)
-          }
-        } catch { clearInterval(pollInterval); setDeploying(false) }
-      }, 3000)
     } catch {
       setDeploying(false)
     }
@@ -299,402 +156,201 @@ export function ProjectDetail() {
     navigate('/')
   }
 
+  const handleServiceSelect = (svc: Service | null) => {
+    if (svc) {
+      setSelectedService(svc)
+      setShowAppDrawer(false)
+    } else {
+      setShowAppDrawer(true)
+      setSelectedService(null)
+    }
+  }
+
+  const handleUnlinkService = async () => {
+    if (!selectedService || !id) return
+    try {
+      await unlinkService(selectedService.id, id)
+      toast({ type: 'success', title: 'Service unlinked' })
+      setSelectedService(null)
+      load()
+    } catch (e: any) {
+      toast({ type: 'error', title: 'Unlink failed', description: e.message })
+    }
+  }
+
+  const handleStartService = async () => {
+    if (!selectedService) return
+    try {
+      await startService(selectedService.id)
+      toast({ type: 'success', title: 'Service started' })
+      setSelectedService(null)
+      load()
+    } catch (e: any) {
+      toast({ type: 'error', title: 'Start failed', description: e.message })
+    }
+  }
+
+  const handleStopService = async () => {
+    if (!selectedService) return
+    try {
+      await stopService(selectedService.id)
+      toast({ type: 'success', title: 'Service stopped' })
+      setSelectedService(null)
+      load()
+    } catch (e: any) {
+      toast({ type: 'error', title: 'Stop failed', description: e.message })
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-full text-gray-500">Loading...</div>
   }
-
   if (!project) return null
 
+  /* Status helpers */
+  const isOnline = ['healthy', 'running', 'active'].includes(project.status)
+  const isStopped = project.status === 'stopped'
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <Link to="/" className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200">
-        <ArrowLeft className="w-4 h-4" /> Dashboard
-      </Link>
-
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{project.name}</h1>
-            <StatusBadge status={project.status} />
-          </div>
-          <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-            {project.provider && <span>{project.provider}{project.framework ? ` / ${project.framework}` : ''}</span>}
-            {project.git_url && (
-              <span className="flex items-center gap-1">
-                <GitBranch className="w-3.5 h-3.5" /> {project.branch}
-              </span>
-            )}
-          </div>
-          {/* Project URL */}
-          {project.status === 'healthy' && (
-            <div className="flex items-center gap-2 mt-2">
-              {domains.length > 0 ? (
-                domains.map(d => (
-                  <a key={d.id} href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-success/10 text-success border border-success/20 rounded-md hover:bg-success/20 transition-colors">
-                    <Globe className="w-3 h-3" />{d.domain}<ExternalLink className="w-3 h-3" />
-                  </a>
-                ))
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-surface-200 text-gray-400 border border-surface-300 rounded-md">
-                  <Globe className="w-3 h-3" />mypaas-{project.name}:3000
-                </span>
-              )}
-            </div>
-          )}
+    <div className="flex flex-col h-[calc(100vh-0px)] bg-gray-50">
+      {/* ─── Top Bar ──────────────────────────────────────── */}
+      <div className="shrink-0 bg-white border-b border-gray-200 px-4 py-2.5 flex items-center gap-3">
+        {/* Back + breadcrumb */}
+        <button onClick={() => navigate('/')}
+          className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors">
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        <div className="flex items-center gap-1.5 text-sm">
+          <span className="text-gray-400 cursor-pointer hover:text-gray-600" onClick={() => navigate('/')}>Projects</span>
+          <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
+          <span className="font-semibold text-gray-900">{project.name}</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {project.status === 'stopped' ? (
-            <button
-              onClick={async () => { await startProject(id!); await load() }}
-              className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-sm font-medium hover:bg-success/80 transition-colors"
-            ><Play className="w-4 h-4" /> Start</button>
-          ) : (
-            <>
-              <button
-                onClick={async () => { await restartProject(id!); await load() }}
-                className="flex items-center gap-2 px-3 py-2 text-gray-400 border border-surface-300 rounded-lg text-sm
-                           hover:bg-surface-100 hover:text-gray-200 transition-colors"
-              ><RefreshCw className="w-4 h-4" /> Restart</button>
-              <button
-                onClick={async () => { await stopProject(id!); await load() }}
-                className="flex items-center gap-2 px-3 py-2 text-warning border border-warning/30 rounded-lg text-sm
-                           hover:bg-warning/10 transition-colors"
-              ><Square className="w-3.5 h-3.5" /> Stop</button>
-            </>
-          )}
-          <button
-            onClick={handleDeploy}
-            disabled={deploying}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
-                       hover:bg-accent-hover disabled:opacity-70 transition-colors"
-          >
-            {deploying ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
-            ) : (
-              <><Rocket className="w-4 h-4" /> Deploy</>
-            )}
+        {/* Status indicator */}
+        <div className="flex items-center gap-1.5 ml-2">
+          <span className={`w-2 h-2 rounded-full ${
+            isOnline ? 'bg-emerald-500' : project.status === 'failed' ? 'bg-red-500' :
+            project.status === 'building' ? 'bg-blue-400 animate-pulse' : 'bg-gray-400'
+          }`} />
+          <span className="text-xs text-gray-500 capitalize">{project.status}</span>
+        </div>
+
+        {project.branch && (
+          <div className="flex items-center gap-1 text-xs text-gray-400 ml-2">
+            <GitBranch className="w-3 h-3" /> {project.branch}
+          </div>
+        )}
+
+        <div className="flex-1" />
+
+        {/* Actions */}
+        <button onClick={() => { setShowAppDrawer(true); setSelectedService(null) }}
+          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          title="Settings">
+          <Settings className="w-4 h-4" />
+        </button>
+
+        {isStopped ? (
+          <button onClick={async () => { await startProject(id!); await load() }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors">
+            <Play className="w-3.5 h-3.5" /> Start
           </button>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-surface-300">
-        {(['deployments', 'architecture', 'env', 'volumes', 'settings'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === t
-                ? 'border-accent text-accent-hover'
-                : 'border-transparent text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {t === 'deployments' ? `Deployments (${deployments.length})` : t === 'architecture' ? 'Architecture' : t === 'env' ? `Env Vars (${envVars.length})` : t === 'volumes' ? `Volumes (${volumes.length})` : 'Settings'}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      {tab === 'deployments' && (() => {
-        const activeDeployment = deployments.find(d => d.status === 'healthy')
-        const historyDeployments = deployments.filter(d => d !== activeDeployment)
-        return (
-          <div className="space-y-6">
-            {deployments.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                No deployments yet. Click Deploy to get started.
-              </div>
-            ) : (
-              <>
-                {/* Active Deployment */}
-                {activeDeployment && (
-                  <DeploymentRow
-                    d={activeDeployment}
-                    isActive
-                    expanded={expandedDeploy === activeDeployment.id}
-                    onToggle={() => setExpandedDeploy(expandedDeploy === activeDeployment.id ? null : activeDeployment.id)}
-                    onRollback={handleRollback}
-                    onRedeploy={() => handleDeploy()}
-                    projectId={project.id}
-                  />
-                )}
-                {/* History */}
-                {historyDeployments.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">History</span>
-                      <div className="flex-1 border-t border-surface-300" />
-                    </div>
-                    <div className="space-y-2">
-                      {historyDeployments.map((d) => (
-                        <DeploymentRow
-                          key={d.id}
-                          d={d}
-                          isActive={false}
-                          expanded={expandedDeploy === d.id}
-                          onToggle={() => setExpandedDeploy(expandedDeploy === d.id ? null : d.id)}
-                          onRollback={handleRollback}
-                          onRedeploy={() => handleDeploy()}
-                          projectId={project.id}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )
-      })()}
-
-      {tab === 'architecture' && (
-        <ProjectArchitecture project={project} onUpdate={load} />
-      )}
-
-      {tab === 'env' && (
-        <EnvEditor projectId={project.id} envVars={envVars} onUpdate={load} />
-      )}
-
-      {tab === 'volumes' && (
-        <div className="space-y-4">
-          <div className="bg-surface-50 border border-surface-300 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Add Volume</h3>
-            <div className="flex gap-2">
-              <input
-                value={newVolName}
-                onChange={(e) => setNewVolName(e.target.value)}
-                placeholder="Volume name (e.g. uploads)"
-                className="flex-1 px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-              <input
-                value={newVolPath}
-                onChange={(e) => setNewVolPath(e.target.value)}
-                placeholder="Mount path (e.g. /app/uploads)"
-                className="flex-1 px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-              <button
-                onClick={handleAddVolume}
-                disabled={!newVolName.trim() || !newVolPath.trim()}
-                className="flex items-center gap-1 px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent-hover disabled:opacity-50 transition-colors"
-              >
-                <Plus className="w-4 h-4" /> Add
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              Volumes persist data across deploys. A Docker volume <code className="text-gray-400">mypaas-{'{name}'}-{'{vol}'}</code> will be created and mounted at the specified path.
-            </p>
-          </div>
-
-          {volumes.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Database className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              No volumes configured. Add a volume to persist data between deployments.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {volumes.map((v) => (
-                <div key={v.id} className="flex items-center justify-between bg-surface-50 border border-surface-300 rounded-lg p-3">
-                  <div className="flex items-center gap-3">
-                    <Database className="w-4 h-4 text-accent" />
-                    <div>
-                      <span className="text-sm font-medium">{v.name}</span>
-                      <span className="text-xs text-gray-500 ml-2 font-mono">{v.mount_path}</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteVolume(v.id)}
-                    className="text-danger hover:text-danger/80 p-1"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'settings' && (
-        <div className="space-y-6">
-          {/* Container Stats */}
-          {projectStats && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-300 mb-2">Container Stats</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-surface-50 border border-surface-300 rounded-lg p-3">
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
-                    <Cpu className="w-3 h-3" /> CPU
-                  </div>
-                  <div className="text-lg font-bold">{projectStats.cpu_percent.toFixed(1)}%</div>
-                </div>
-                <div className="bg-surface-50 border border-surface-300 rounded-lg p-3">
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
-                    <HardDrive className="w-3 h-3" /> Memory
-                  </div>
-                  <div className="text-lg font-bold">
-                    {(projectStats.mem_usage / 1024 / 1024).toFixed(1)} MB
-                    <span className="text-sm text-gray-500 ml-1">
-                      / {(projectStats.mem_limit / 1024 / 1024).toFixed(0)} MB
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Webhook URL */}
-          {project.git_url && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-300 mb-2">GitHub Webhook</h3>
-              <div className="bg-surface-50 border border-surface-300 rounded-lg p-4">
-                <p className="text-xs text-gray-500 mb-2">
-                  Add this URL as a webhook in your GitHub repo settings to enable auto-deploy on push.
-                </p>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 px-3 py-2 bg-surface border border-surface-300 rounded text-xs font-mono truncate">
-                    {webhookUrl}
-                  </code>
-                  <button
-                    onClick={copyWebhookUrl}
-                    className="p-2 text-gray-400 hover:text-gray-200 border border-surface-300 rounded transition-colors"
-                    title="Copy"
-                  >
-                    {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Resource Limits */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-300 mb-2">Resource Limits</h3>
-            <div className="bg-surface-50 border border-surface-300 rounded-lg p-4">
-              <div className="grid grid-cols-3 gap-4 mb-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">CPU (cores, 0 = unlimited)</label>
-                  <input
-                    type="number"
-                    value={cpuLimit}
-                    onChange={(e) => setCpuLimit(parseFloat(e.target.value) || 0)}
-                    min="0" max="4" step="0.25"
-                    className="w-full px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Memory (MB, 0 = unlimited)</label>
-                  <input
-                    type="number"
-                    value={memLimit}
-                    onChange={(e) => setMemLimit(parseInt(e.target.value) || 0)}
-                    min="0" step="64"
-                    className="w-full px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Replicas (Swarm, 0 = default)</label>
-                  <input
-                    type="number"
-                    value={replicas}
-                    onChange={(e) => setReplicas(parseInt(e.target.value) || 0)}
-                    min="0" max="10" step="1"
-                    className="w-full px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-              </div>
-              <button
-                onClick={handleSaveResources}
-                className="px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent-hover transition-colors"
-              >
-                Save Limits
-              </button>
-            </div>
-          </div>
-
-          {/* Custom Domains */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-300 mb-2">Custom Domains</h3>
-            <div className="bg-surface-50 border border-surface-300 rounded-lg p-4 space-y-3">
-              {domains.length > 0 && domains.map((d) => (
-                <div key={d.id} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-accent" />
-                    <span className="text-sm font-mono">{d.domain}</span>
-                    {d.ssl_auto && <span className="text-xs text-success bg-success/10 px-1.5 py-0.5 rounded">SSL</span>}
-                  </div>
-                  <button
-                    onClick={() => handleDeleteDomain(d.id)}
-                    className="text-danger hover:text-danger/80 p-1"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-              <div className="flex gap-2">
-                <input
-                  value={newDomain}
-                  onChange={(e) => setNewDomain(e.target.value)}
-                  placeholder="app.example.com"
-                  className="flex-1 px-3 py-1.5 bg-surface border border-surface-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()}
-                />
-                <button
-                  onClick={handleAddDomain}
-                  disabled={!newDomain.trim()}
-                  className="px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent-hover disabled:opacity-50 transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-              <p className="text-xs text-gray-500">
-                Point your domain's DNS A record to your server IP. SSL will be auto-provisioned via Let's Encrypt.
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-medium text-gray-300 mb-2">Project Info</h3>
-            <div className="bg-surface-50 border border-surface-300 rounded-lg p-4 text-sm space-y-2">
-              <div className="flex justify-between">
-                <span className="text-gray-500">ID</span>
-                <span className="font-mono">{project.id}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Git URL</span>
-                <span className="font-mono truncate ml-4">{project.git_url || '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Auto Deploy</span>
-                <span>{project.auto_deploy ? 'Enabled' : 'Disabled'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Created</span>
-                <span>{new Date(project.created_at).toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-surface-300 pt-6">
-            <h3 className="text-sm font-medium text-danger mb-2">Danger Zone</h3>
-            <button
-              onClick={() => setShowDeleteModal(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm text-danger border border-danger/30 rounded-lg hover:bg-danger/10 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" /> Delete Project
+        ) : (
+          <>
+            <button onClick={async () => { await restartProject(id!); await load() }}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Restart">
+              <RefreshCw className="w-4 h-4" />
             </button>
-          </div>
+            <button onClick={async () => { await stopProject(id!); await load() }}
+              className="p-2 text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Stop">
+              <Square className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
 
-          {showDeleteModal && (
-            <DeleteModal
-              projectName={project.name}
-              onConfirm={handleDelete}
-              onCancel={() => setShowDeleteModal(false)}
-            />
-          )}
+        <button onClick={handleDeploy} disabled={deploying}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-900 text-white rounded-lg text-sm font-medium
+                     hover:bg-gray-800 disabled:opacity-60 transition-colors">
+          {deploying ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deploying...</>
+            : <><Rocket className="w-3.5 h-3.5" /> Deploy</>}
+        </button>
+
+        <button onClick={() => setShowDeleteModal(true)}
+          className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete project">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* ─── Main Content: Canvas + Activity ─────────────── */}
+      <div className="flex-1 flex min-h-0">
+        {/* React Flow Canvas */}
+        <div className="flex-1 relative">
+          <ProjectCanvas
+            project={project}
+            onSelectService={handleServiceSelect}
+            onUpdate={load}
+          />
         </div>
+
+        {/* Activity Sidebar (right) */}
+        <div className="w-[280px] bg-white border-l border-gray-200 flex flex-col shrink-0">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h3 className="text-sm font-semibold text-gray-900">Activity</h3>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <ActivitySidebar
+              deployments={deployments}
+              onViewLogs={(depId) => setLogDeploymentId(depId)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Drawers & Modals ─────────────────────────────── */}
+
+      {selectedService && (
+        <ServiceDrawer
+          service={selectedService}
+          project={project}
+          onClose={() => setSelectedService(null)}
+          onStart={handleStartService}
+          onStop={handleStopService}
+          onUnlink={handleUnlinkService}
+        />
+      )}
+
+      {showAppDrawer && (
+        <AppDrawer
+          project={project}
+          deployments={deployments}
+          envVars={envVars}
+          stats={projectStats}
+          domains={domains}
+          volumes={volumes}
+          onClose={() => setShowAppDrawer(false)}
+          onUpdate={load}
+          onRestart={async () => { await restartProject(id!); await load() }}
+          onStop={async () => { await stopProject(id!); await load() }}
+          onStart={async () => { await startProject(id!); await load() }}
+          onDeploy={handleDeploy}
+          onViewLogs={(depId) => { setShowAppDrawer(false); setLogDeploymentId(depId) }}
+        />
+      )}
+
+      {logDeploymentId && (
+        <LogModal
+          deploymentId={logDeploymentId}
+          projectId={project.id}
+          onClose={() => setLogDeploymentId(null)}
+        />
+      )}
+
+      {showDeleteModal && (
+        <DeleteModal
+          projectName={project.name}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteModal(false)}
+        />
       )}
     </div>
   )
