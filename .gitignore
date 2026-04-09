@@ -2,24 +2,34 @@
 node_modules/
 
 # Build outputs
+web/dist/
 my-paas-extension/dist/
 my-paas-extension/webview/dist/
 *.vsix
 
-# vscode
-.vscode/
-
-# playwright
-.playwright-mcp/
-.profile/
-# Go
+# Go binaries
 core/mypaas-core
 core/mypaas-core.exe
+server/server
+server/server.exe
+cli/mypaas
+cli/mypaas.exe
+
+# Temp / deploy artifacts
+*.tar
+C:\Temp/
+deploy/daemon.json
 
 # IDE
-.vscode/settings.json
+.vscode/
 *.swp
 *.swo
+*.iml
+.idea/
+
+# Playwright
+.playwright-mcp/
+.profile/
 
 # OS
 .DS_Store
@@ -29,6 +39,10 @@ Desktop.ini
 # Env
 .env
 .env.local
+.env.production
 
 # Logs
 *.log
+
+# TypeScript
+tsconfig.tsbuildinfo

@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/my-paas/server/crypto"
 	"github.com/my-paas/server/model"
 )
 
@@ -64,11 +65,24 @@ func (h *Handler) Setup(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.Status(201).JSON(fiber.Map{
+	response := fiber.Map{
 		"user":    user,
 		"token":   session.Token,
 		"expires": session.ExpiresAt,
-	})
+	}
+
+	// Include JWT tokens if enterprise config is available
+	if h.Config != nil && h.Config.Secret != "" {
+		accessToken, _ := crypto.GenerateJWT(user.ID, user.Username, user.Role, "access", h.Config.Secret, h.Config.JWTExpiry)
+		refreshToken, _ := crypto.GenerateJWT(user.ID, user.Username, user.Role, "refresh", h.Config.Secret, h.Config.RefreshExpiry)
+		if accessToken != "" {
+			response["access_token"] = accessToken
+			response["refresh_token"] = refreshToken
+			response["expires_in"] = int(h.Config.JWTExpiry.Seconds())
+		}
+	}
+
+	return c.Status(201).JSON(response)
 }
 
 func (h *Handler) Login(c *fiber.Ctx) error {
@@ -92,11 +106,24 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.JSON(fiber.Map{
+	response := fiber.Map{
 		"user":    user,
 		"token":   session.Token,
 		"expires": session.ExpiresAt,
-	})
+	}
+
+	// Include JWT tokens if enterprise config is available
+	if h.Config != nil && h.Config.Secret != "" {
+		accessToken, _ := crypto.GenerateJWT(user.ID, user.Username, user.Role, "access", h.Config.Secret, h.Config.JWTExpiry)
+		refreshToken, _ := crypto.GenerateJWT(user.ID, user.Username, user.Role, "refresh", h.Config.Secret, h.Config.RefreshExpiry)
+		if accessToken != "" {
+			response["access_token"] = accessToken
+			response["refresh_token"] = refreshToken
+			response["expires_in"] = int(h.Config.JWTExpiry.Seconds())
+		}
+	}
+
+	return c.JSON(response)
 }
 
 func (h *Handler) Logout(c *fiber.Ctx) error {

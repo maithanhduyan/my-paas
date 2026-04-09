@@ -12,24 +12,37 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"github.com/my-paas/server/cache"
+	"github.com/my-paas/server/config"
 	"github.com/my-paas/server/docker"
 	"github.com/my-paas/server/handler"
+	"github.com/my-paas/server/metrics"
 	"github.com/my-paas/server/middleware"
+	"github.com/my-paas/server/notify"
 	"github.com/my-paas/server/store"
 	"github.com/my-paas/server/watcher"
 	"github.com/my-paas/server/worker"
 )
 
 func main() {
-	// Config
-	dbPath := envOr("MYPAAS_DB", "/data/mypaas.db")
-	listen := envOr("MYPAAS_LISTEN", ":8080")
+	// Load config
+	cfg := config.Load()
 
-	// Ensure data directory exists
-	os.MkdirAll("/data/builds", 0o755)
+	// Ensure data directories exist
+	os.MkdirAll(cfg.BuildsDir, 0o755)
+	os.MkdirAll(cfg.DataDir, 0o755)
 
-	// Init store
-	db, err := store.New(dbPath)
+	// Init store (SQLite or PostgreSQL)
+	var db *store.Store
+	var err error
+	switch cfg.DBDriver {
+	case "postgres":
+		log.Println("Using PostgreSQL database")
+		db, err = store.NewPostgres(cfg.DBURL)
+	default:
+		log.Println("Using SQLite database")
+		db, err = store.New(cfg.DBPath)
+	}
 	if err != nil {
 		log.Fatalf("failed to init database: %v", err)
 	}
@@ -50,20 +63,39 @@ func main() {
 		log.Println("Docker connection OK")
 	}
 
+	// Init Redis (optional)
+	var redis *cache.Redis
+	if cfg.RedisEnabled {
+		redis, err = cache.NewRedis(cfg.RedisURL)
+		if err != nil {
+			log.Printf("WARNING: Redis not available: %v (falling back to in-memory)", err)
+			redis = nil
+		} else {
+			log.Println("Redis connection OK")
+			defer redis.Close()
+		}
+	}
+
+	// Init metrics
+	m := metrics.New()
+
 	// Init deploy worker
 	deployWorker := &worker.DeployWorker{
 		Store:  db,
 		Docker: dockerClient,
 	}
 
-	// Init job queue (buffer=100, 2 concurrent workers)
-	queue := worker.NewQueue(100, deployWorker.Handle)
+	// Init job queue
+	queue := worker.NewQueue(cfg.QueueSize, deployWorker.Handle)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	queue.Start(ctx, 2)
+	queue.Start(ctx, cfg.WorkerCount)
+
+	// Init notifier
+	notifier := notify.New(db)
 
 	// Init handlers
-	h := handler.New(db, dockerClient, queue)
+	h := handler.NewEnterprise(db, dockerClient, queue, cfg, redis, m, notifier)
 
 	// Start git watcher
 	gitWatcher := watcher.New(db, queue)
@@ -71,20 +103,25 @@ func main() {
 
 	// Init Fiber
 	app := fiber.New(fiber.Config{
-		AppName:      "My PaaS Server",
+		AppName:      "My PaaS Enterprise Server",
 		ErrorHandler: customErrorHandler,
+		BodyLimit:    50 * 1024 * 1024, // 50MB for large uploads
 	})
 
-	// Middleware
+	// Middleware stack
 	app.Use(recover.New())
+	app.Use(middleware.RequestID())
+	app.Use(middleware.SecurityHeaders())
 	app.Use(logger.New(logger.Config{
 		Format: "${time} ${status} ${method} ${path} ${latency}\n",
 	}))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Content-Type,Authorization",
+		AllowHeaders: "Content-Type,Authorization,X-Request-ID",
 	}))
+	app.Use(m.MetricsMiddleware())
+	app.Use(middleware.RateLimiter(cfg, redis))
 
 	// Routes
 	api := app.Group("/api")
@@ -97,10 +134,18 @@ func main() {
 	api.Post("/auth/register", h.RegisterWithInvite)
 	api.Post("/webhooks/github", h.GithubWebhook)
 
+	// Prometheus metrics endpoint
+	api.Get("/metrics", m.Handler())
+
+	// OpenAPI / Swagger documentation
+	api.Get("/docs/openapi.json", h.OpenAPISpec)
+	api.Get("/docs", h.SwaggerUI)
+
 	// --- Protected routes ---
-	protected := api.Group("", middleware.AuthRequired(db))
+	protected := api.Group("", middleware.AuthRequired(db, cfg))
 
 	protected.Post("/auth/logout", h.Logout)
+	protected.Post("/auth/refresh", h.RefreshToken)
 
 	// Projects
 	protected.Get("/projects", h.ListProjects)
@@ -184,6 +229,41 @@ func main() {
 	admin.Post("/swarm/init", h.SwarmInit)
 	admin.Get("/swarm/token", h.SwarmToken)
 
+	// --- Enterprise routes ---
+
+	// Registry
+	protected.Get("/registry/status", h.GetRegistryStatus)
+	admin.Post("/registry/start", h.StartRegistry)
+	admin.Post("/registry/stop", h.StopRegistry)
+	protected.Get("/registry/images", h.ListRegistryImages)
+	admin.Delete("/registry/images/:name", h.DeleteRegistryImage)
+	protected.Post("/projects/:id/push", h.PushToRegistry)
+
+	// Organizations
+	protected.Get("/organizations", h.ListOrganizations)
+	protected.Post("/organizations", h.CreateOrganization)
+	protected.Get("/organizations/:id", h.GetOrganization)
+	protected.Put("/organizations/:id", h.UpdateOrganization)
+	protected.Delete("/organizations/:id", middleware.RoleRequired("admin"), h.DeleteOrganization)
+	protected.Get("/organizations/:id/members", h.ListOrgMembers)
+	protected.Post("/organizations/:id/members", h.AddOrgMember)
+	protected.Delete("/organizations/:id/members/:userId", h.RemoveOrgMember)
+	protected.Get("/organizations/:id/quotas", h.GetOrgQuotaUsage)
+
+	// API Keys
+	protected.Get("/api-keys", h.ListAPIKeys)
+	protected.Post("/api-keys", h.CreateAPIKey)
+	protected.Delete("/api-keys/:id", h.DeleteAPIKey)
+
+	// Notification Channels
+	protected.Get("/notifications/channels", h.ListNotificationChannels)
+	protected.Post("/notifications/channels", h.CreateNotificationChannel)
+	protected.Put("/notifications/channels/:id", h.UpdateNotificationChannelStatus)
+	protected.Delete("/notifications/channels/:id", h.DeleteNotificationChannel)
+	protected.Get("/notifications/channels/:channelId/rules", h.ListNotificationRules)
+	protected.Post("/notifications/channels/:channelId/rules", h.CreateNotificationRule)
+	protected.Delete("/notifications/rules/:ruleId", h.DeleteNotificationRule)
+
 	// Serve static frontend (production)
 	app.Static("/", "./static")
 	// SPA fallback
@@ -202,17 +282,10 @@ func main() {
 		app.Shutdown()
 	}()
 
-	log.Printf("My PaaS server starting on %s", listen)
-	if err := app.Listen(listen); err != nil {
+	log.Printf("My PaaS Enterprise server starting on %s (db: %s)", cfg.Listen, cfg.DBDriver)
+	if err := app.Listen(cfg.Listen); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func customErrorHandler(c *fiber.Ctx, err error) error {

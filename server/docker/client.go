@@ -550,6 +550,93 @@ func (c *Client) SwarmManagerAddr(ctx context.Context) (string, error) {
 	return "", nil
 }
 
+// PushImage pushes a Docker image to a registry.
+func (c *Client) PushImage(ctx context.Context, imageRef string) error {
+	reader, err := c.cli.ImagePush(ctx, imageRef, image.PushOptions{RegistryAuth: "e30="}) // empty auth base64("{}")
+	if err != nil {
+		return fmt.Errorf("push image: %w", err)
+	}
+	defer reader.Close()
+	io.Copy(io.Discard, reader)
+	return nil
+}
+
+// CreateSwarmRegistryService creates a Docker registry as a Swarm service with published port.
+func (c *Client) CreateSwarmRegistryService(ctx context.Context, name, img, port, network string) (string, error) {
+	c.ensureOverlayNetwork(ctx, network)
+
+	var replicas uint64 = 1
+
+	spec := swarm.ServiceSpec{
+		Annotations: swarm.Annotations{
+			Name: name,
+			Labels: map[string]string{
+				"mypaas.registry": "true",
+			},
+		},
+		TaskTemplate: swarm.TaskSpec{
+			ContainerSpec: &swarm.ContainerSpec{
+				Image: img,
+				Env: []string{
+					"REGISTRY_STORAGE_DELETE_ENABLED=true",
+				},
+				Mounts: []mount.Mount{
+					{
+						Type:   mount.TypeVolume,
+						Source: "mypaas-registry-data",
+						Target: "/var/lib/registry",
+					},
+				},
+			},
+			Placement: &swarm.Placement{
+				Constraints: []string{"node.role == manager"},
+			},
+		},
+		Mode: swarm.ServiceMode{
+			Replicated: &swarm.ReplicatedService{Replicas: &replicas},
+		},
+		EndpointSpec: &swarm.EndpointSpec{
+			Ports: []swarm.PortConfig{
+				{
+					Protocol:      swarm.PortConfigProtocolTCP,
+					TargetPort:    5000,
+					PublishedPort: 5000,
+					PublishMode:   swarm.PortConfigPublishModeIngress,
+				},
+			},
+		},
+	}
+
+	if network != "" {
+		spec.TaskTemplate.Networks = []swarm.NetworkAttachmentConfig{
+			{Target: network},
+		}
+	}
+
+	resp, err := c.cli.ServiceCreate(ctx, spec, types.ServiceCreateOptions{})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+// RunRegistryContainer runs a Docker registry as a standalone container.
+func (c *Client) RunRegistryContainer(ctx context.Context, name, img, port string) (string, error) {
+	return c.RunContainer(ctx, RunContainerOpts{
+		Name:  name,
+		Image: img,
+		Env: map[string]string{
+			"REGISTRY_STORAGE_DELETE_ENABLED": "true",
+		},
+		PortBindings: nat.PortMap{
+			nat.Port(port + "/tcp"): []nat.PortBinding{
+				{HostIP: "0.0.0.0", HostPort: port},
+			},
+		},
+		Binds: []string{"mypaas-registry-data:/var/lib/registry"},
+	})
+}
+
 func (c *Client) ensureOverlayNetwork(ctx context.Context, name string) {
 	networks, err := c.cli.NetworkList(ctx, network.ListOptions{})
 	if err != nil {

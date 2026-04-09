@@ -11,6 +11,7 @@ export function NewProject() {
   const [gitUrl, setGitUrl] = useState('')
   const [branch, setBranch] = useState('main')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; git_url?: string }>({})
   const [loading, setLoading] = useState(false)
   const [samples, setSamples] = useState<Sample[]>([])
   const [selectedSample, setSelectedSample] = useState<string | null>(null)
@@ -36,8 +37,11 @@ export function NewProject() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) { setError('Project name is required'); return }
-    if (!gitUrl.trim()) { setError('Git URL is required'); return }
+    const errs: { name?: string; git_url?: string } = {}
+    if (!name.trim()) errs.name = 'Project name is required'
+    if (!gitUrl.trim()) errs.git_url = 'Git repository URL is required'
+    if (Object.keys(errs).length) { setFieldErrors(errs); return }
+    setFieldErrors({})
 
     setLoading(true)
     setError('')
@@ -106,11 +110,12 @@ export function NewProject() {
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); setFieldErrors(prev => ({ ...prev, name: undefined })) }}
             placeholder="my-awesome-app"
-            className="w-full px-3 py-2 bg-surface-100 border border-surface-300 rounded-lg text-sm
-                       focus:outline-none focus:border-accent"
+            className={`w-full px-3 py-2 bg-surface-100 border rounded-lg text-sm
+                       focus:outline-none focus:border-accent ${fieldErrors.name ? 'border-danger' : 'border-surface-300'}`}
           />
+          {fieldErrors.name && <p className="text-xs text-danger mt-1">{fieldErrors.name}</p>}
         </div>
 
         <div>
@@ -121,11 +126,12 @@ export function NewProject() {
           <input
             type="text"
             value={gitUrl}
-            onChange={(e) => setGitUrl(e.target.value)}
+            onChange={(e) => { setGitUrl(e.target.value); setFieldErrors(prev => ({ ...prev, git_url: undefined })) }}
             placeholder="https://github.com/user/repo.git"
-            className="w-full px-3 py-2 bg-surface-100 border border-surface-300 rounded-lg text-sm
-                       focus:outline-none focus:border-accent"
+            className={`w-full px-3 py-2 bg-surface-100 border rounded-lg text-sm
+                       focus:outline-none focus:border-accent ${fieldErrors.git_url ? 'border-danger' : 'border-surface-300'}`}
           />
+          {fieldErrors.git_url && <p className="text-xs text-danger mt-1">{fieldErrors.git_url}</p>}
         </div>
 
         <div>

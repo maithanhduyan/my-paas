@@ -59,6 +59,14 @@ export const deleteEnvVar = (projectId: string, key: string) =>
 export const rollbackDeployment = (deploymentId: string) =>
   request<{ message: string }>(`/deployments/${deploymentId}/rollback`, { method: 'POST' })
 
+// Project container actions
+export const restartProject = (projectId: string) =>
+  request<{ message: string }>(`/projects/${projectId}/restart`, { method: 'POST' })
+export const stopProject = (projectId: string) =>
+  request<{ message: string }>(`/projects/${projectId}/stop`, { method: 'POST' })
+export const startProject = (projectId: string) =>
+  request<{ message: string }>(`/projects/${projectId}/start`, { method: 'POST' })
+
 // Services
 export const listServices = () => request<Service[]>('/services')
 export const createService = (name: string, type: ServiceType, image?: string) =>

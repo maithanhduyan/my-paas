@@ -4,12 +4,16 @@ import { listProjects, getHealth } from '../api'
 import type { Project, HealthResponse } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { timeAgo } from '../lib/utils'
-import { GitBranch, Plus, Server, Activity } from 'lucide-react'
+import { GitBranch, Plus, Server, Activity, Search } from 'lucide-react'
+
+type StatusFilter = 'all' | 'healthy' | 'failed' | 'building'
 
 export function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([])
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
   useEffect(() => {
     Promise.all([
@@ -17,6 +21,13 @@ export function Dashboard() {
       getHealth().then(setHealth).catch(() => null),
     ]).finally(() => setLoading(false))
   }, [])
+
+  const filtered = projects.filter(p => {
+    const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
+      (p.provider && p.provider.toLowerCase().includes(search.toLowerCase()))
+    const matchStatus = statusFilter === 'all' || p.status === statusFilter
+    return matchSearch && matchStatus
+  })
 
   if (loading) {
     return (
@@ -58,6 +69,35 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Search & Filter */}
+      {projects.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search projects..."
+              className="w-full pl-9 pr-3 py-2 bg-surface-50 border border-surface-300 rounded-lg text-sm
+                         placeholder-gray-600 focus:outline-none focus:border-accent transition-colors"
+            />
+          </div>
+          <div className="flex gap-1.5">
+            {(['all', 'healthy', 'failed', 'building'] as StatusFilter[]).map(f => (
+              <button key={f} onClick={() => setStatusFilter(f)}
+                className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors capitalize ${
+                  statusFilter === f
+                    ? 'bg-accent/15 text-accent-hover border border-accent/30'
+                    : 'bg-surface-50 text-gray-500 border border-surface-300 hover:text-gray-300 hover:border-surface-200'
+                }`}>
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Project list */}
       {projects.length === 0 ? (
         <div className="text-center py-16 text-gray-500">
@@ -73,11 +113,18 @@ export function Dashboard() {
         </div>
       ) : (
         <div className="grid gap-3">
-          {projects.map((p) => (
+          {filtered.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              No projects match your search.
+            </div>
+          ) : (
+            filtered.map((p) => (
             <Link
               key={p.id}
               to={`/projects/${p.id}`}
-              className="flex items-center gap-4 p-4 bg-surface-50 border border-surface-300 rounded-lg hover:border-surface-200 hover:bg-surface-100 transition-colors"
+              className="group flex items-center gap-4 p-4 bg-surface-50 border border-surface-300 rounded-lg
+                         hover:border-accent/40 hover:bg-surface-100 hover:shadow-lg hover:shadow-accent/5
+                         transition-all duration-200"
             >
               <div className="w-10 h-10 bg-surface-200 rounded-lg flex items-center justify-center text-lg">
                 {providerEmoji(p.provider)}
@@ -101,7 +148,8 @@ export function Dashboard() {
                 {timeAgo(p.updated_at)}
               </div>
             </Link>
-          ))}
+          ))
+          )}
         </div>
       )}
     </div>

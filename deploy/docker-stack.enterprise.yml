@@ -1,0 +1,223 @@
+version: "3.8"
+
+# My PaaS Enterprise - Production Deployment
+# Usage: docker stack deploy -c docker-stack.enterprise.yml mypaas
+
+services:
+  mypaas:
+    image: mypaas:enterprise
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.mypaas-api.rule=Host(`${MYPAAS_DOMAIN:-mypaas.local}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.mypaas-api.entrypoints=websecure"
+        - "traefik.http.routers.mypaas-api.tls.certresolver=letsencrypt"
+        - "traefik.http.services.mypaas-api.loadbalancer.server.port=8080"
+        - "traefik.http.routers.mypaas-ui.rule=Host(`${MYPAAS_DOMAIN:-mypaas.local}`)"
+        - "traefik.http.routers.mypaas-ui.entrypoints=websecure"
+        - "traefik.http.routers.mypaas-ui.tls.certresolver=letsencrypt"
+        - "traefik.http.services.mypaas-ui.loadbalancer.server.port=8080"
+    environment:
+      MYPAAS_DB_DRIVER: postgres
+      MYPAAS_DB_URL: "postgres://mypaas:${POSTGRES_PASSWORD:-secret}@postgres:5432/mypaas?sslmode=disable"
+      MYPAAS_REDIS_URL: "redis://redis:6379/0"
+      MYPAAS_LISTEN: ":8080"
+      MYPAAS_DOMAIN: "${MYPAAS_DOMAIN:-mypaas.local}"
+      MYPAAS_SECRET: "${MYPAAS_SECRET}"
+      MYPAAS_ENCRYPTION_KEY: "${MYPAAS_ENCRYPTION_KEY}"
+      MYPAAS_WORKER_COUNT: "4"
+      MYPAAS_QUEUE_SIZE: "500"
+      MYPAAS_RATE_LIMIT_RPS: "200"
+      MYPAAS_RATE_LIMIT_BURST: "400"
+      MYPAAS_JWT_EXPIRY: "24h"
+      MYPAAS_REFRESH_EXPIRY: "720h"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mypaas-builds:/data/builds
+    networks:
+      - mypaas-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+    environment:
+      POSTGRES_DB: mypaas
+      POSTGRES_USER: mypaas
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-secret}"
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - mypaas-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mypaas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1000
+      --save 300 100
+    volumes:
+      - redis-data:/data
+    networks:
+      - mypaas-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  traefik:
+    image: traefik:v2.11
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-certs:/certs
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.swarmMode=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=mypaas-network
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/certs/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --entrypoints.metrics.address=:8082
+      - --log.level=WARN
+      - --accesslog=true
+      - --accesslog.bufferingsize=100
+    networks:
+      - mypaas-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=5GB
+    networks:
+      - mypaas-network
+
+  grafana:
+    image: grafana/grafana:latest
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.grafana.rule=Host(`grafana.${MYPAAS_DOMAIN:-mypaas.local}`)"
+        - "traefik.http.routers.grafana.entrypoints=websecure"
+        - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+        - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "https://grafana.${MYPAAS_DOMAIN:-mypaas.local}"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - mypaas-network
+
+volumes:
+  mypaas-builds:
+  postgres-data:
+  redis-data:
+  traefik-certs:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  mypaas-network:
+    driver: overlay
+    attachable: true

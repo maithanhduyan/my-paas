@@ -27,7 +27,7 @@ RUN CGO_ENABLED=1 go build -ldflags="-w -s" -o /mypaas-server .
 
 # Stage 3: Runtime
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates git docker-cli
+RUN apk add --no-cache ca-certificates git docker-cli curl
 WORKDIR /app
 COPY --from=builder /mypaas-server .
 COPY --from=frontend /build/dist ./static/
@@ -39,8 +39,16 @@ RUN chmod +x ./samples/init-samples.sh
 RUN mkdir -p /data/builds
 
 EXPOSE 8080
-ENV MYPAAS_DB=/data/mypaas.db
-ENV MYPAAS_LISTEN=:8080
+
+# Default environment (SQLite mode - backward compatible)
+ENV MYPAAS_DB=/data/mypaas.db \
+    MYPAAS_LISTEN=:8080 \
+    MYPAAS_DB_DRIVER=sqlite \
+    MYPAAS_DATA_DIR=/data \
+    MYPAAS_BUILDS_DIR=/data/builds
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8080/api/health || exit 1
 
 # Init sample git repos then start server
 CMD ["sh", "-c", "./samples/init-samples.sh && ./mypaas-server"]

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getProject, listDeployments, getEnvVars,
   triggerDeploy, deleteProject, rollbackDeployment,
   getProjectStats, listDomains, addDomain, deleteDomain, updateProject,
-  listVolumes, createVolume, deleteVolume
+  listVolumes, createVolume, deleteVolume,
+  restartProject, stopProject, startProject
 } from '../api'
 import type { Project, Deployment, EnvVar, ContainerStats, Domain, Volume } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -13,10 +14,159 @@ import { EnvEditor } from '../components/EnvEditor'
 import { timeAgo, duration } from '../lib/utils'
 import {
   ArrowLeft, Rocket, Trash2, GitBranch, Clock,
-  ChevronDown, ChevronUp, RotateCcw, Cpu, HardDrive, Copy, Check, Globe, Database, Plus
+  ChevronDown, ChevronUp, RotateCcw, Cpu, HardDrive, Copy, Check, Globe, Database, Plus,
+  ExternalLink, AlertTriangle, Loader2, MoreVertical, Play, Square, RefreshCw
 } from 'lucide-react'
 
 type Tab = 'deployments' | 'env' | 'volumes' | 'settings'
+
+/* ─── Deployment Status Badge (ACTIVE / REMOVED / building etc) ─── */
+function DeployBadge({ status, isActive }: { status: string; isActive: boolean }) {
+  if (isActive && status === 'healthy') {
+    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-success/20 text-success border border-success/30 rounded">Active</span>
+  }
+  if (status === 'healthy') {
+    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-surface-200 text-gray-500 border border-surface-300 rounded">Removed</span>
+  }
+  if (status === 'failed') {
+    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-danger/20 text-danger border border-danger/30 rounded">Failed</span>
+  }
+  if (status === 'rolled_back') {
+    return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-warning/20 text-warning border border-warning/30 rounded">Rolled back</span>
+  }
+  // building/deploying/queued
+  return <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded animate-pulse">{status}</span>
+}
+
+/* ─── 3-dot Action Menu ─── */
+function ActionMenu({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+  return (
+    <div ref={ref} className="absolute right-0 top-full mt-1 z-20 bg-surface-100 border border-surface-300 rounded-lg shadow-xl py-1 min-w-[160px]">
+      {children}
+    </div>
+  )
+}
+function MenuItem({ icon: Icon, label, onClick, danger }: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string; onClick: () => void; danger?: boolean
+}) {
+  return (
+    <button onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-surface-200 transition-colors ${danger ? 'text-danger' : 'text-gray-300'}`}>
+      <Icon className="w-3.5 h-3.5" />{label}
+    </button>
+  )
+}
+
+/* ─── Deployment Row ─── */
+function DeploymentRow({ d, isActive, expanded, onToggle, onRollback, onRedeploy, projectId }: {
+  d: Deployment; isActive: boolean; expanded: boolean
+  onToggle: () => void; onRollback: (id: string) => void; onRedeploy: () => void
+  projectId: string
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  return (
+    <div className={`bg-surface-50 border rounded-lg overflow-hidden ${isActive ? 'border-success/30' : 'border-surface-300'}`}>
+      <div className="flex items-center gap-3 p-3">
+        <button onClick={onToggle} className="flex-1 flex items-center gap-3 text-left hover:bg-surface-100 transition-colors rounded -m-1 p-1">
+          <DeployBadge status={d.status} isActive={isActive} />
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-mono text-gray-300 truncate block">
+              {d.commit_hash ? `${d.commit_hash.slice(0, 7)} — ${d.commit_msg || 'No message'}` : d.id.slice(0, 8)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 shrink-0">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {d.started_at && d.finished_at ? duration(d.started_at, d.finished_at) : '—'}
+            </span>
+            <span>{timeAgo(d.created_at)}</span>
+            <span className="px-1.5 py-0.5 bg-surface-200 rounded text-xs">{d.trigger}</span>
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </button>
+        {/* 3-dot menu */}
+        <div className="relative">
+          <button onClick={() => setMenuOpen(!menuOpen)}
+            className="p-1.5 text-gray-500 hover:text-gray-300 hover:bg-surface-200 rounded transition-colors">
+            <MoreVertical className="w-4 h-4" />
+          </button>
+          {menuOpen && (
+            <ActionMenu onClose={() => setMenuOpen(false)}>
+              <MenuItem icon={ChevronDown} label="View logs" onClick={() => { onToggle(); setMenuOpen(false) }} />
+              <MenuItem icon={Rocket} label="Redeploy" onClick={() => { onRedeploy(); setMenuOpen(false) }} />
+              {d.status === 'healthy' && d.image_tag && (
+                <MenuItem icon={RotateCcw} label="Rollback to this" onClick={() => { onRollback(d.id); setMenuOpen(false) }} />
+              )}
+            </ActionMenu>
+          )}
+        </div>
+      </div>
+      {expanded && (
+        <div className="border-t border-surface-300 p-3">
+          <LogViewer deploymentId={d.id} projectId={projectId} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── Delete Confirmation Modal ─── */
+function DeleteModal({ projectName, onConfirm, onCancel }: {
+  projectName: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const [confirmText, setConfirmText] = useState('')
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onCancel}>
+      <div className="bg-surface-50 border border-surface-300 rounded-xl p-6 max-w-md w-full space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 text-danger">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <h3 className="font-semibold text-lg">Delete Project</h3>
+        </div>
+        <p className="text-sm text-gray-400">
+          This action <strong className="text-gray-200">cannot be undone</strong>. This will permanently delete the
+          project <strong className="text-gray-200">{projectName}</strong>, its deployments, and remove the Swarm service.
+        </p>
+        <div>
+          <label className="block text-sm text-gray-400 mb-1.5">
+            Type <strong className="text-gray-200 font-mono">{projectName}</strong> to confirm
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={e => setConfirmText(e.target.value)}
+            placeholder={projectName}
+            autoFocus
+            className="w-full px-3 py-2 bg-surface border border-surface-300 rounded-lg text-sm
+                       focus:outline-none focus:ring-1 focus:ring-danger"
+          />
+        </div>
+        <div className="flex justify-end gap-3">
+          <button onClick={onCancel}
+            className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 rounded-lg border border-surface-300 hover:bg-surface-200 transition-colors">
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            disabled={confirmText !== projectName}
+            className="px-4 py-2 text-sm text-white bg-danger rounded-lg hover:bg-danger/80
+                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+            Delete this project
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
@@ -38,6 +188,7 @@ export function ProjectDetail() {
   const [volumes, setVolumes] = useState<Volume[]>([])
   const [newVolName, setNewVolName] = useState('')
   const [newVolPath, setNewVolPath] = useState('')
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -118,16 +269,31 @@ export function ProjectDetail() {
     setDeploying(true)
     try {
       const dep = await triggerDeploy(id)
-      setExpandedDeploy(dep.id)
+      // Auto-switch to deployments tab and expand the new deployment for live streaming
       setTab('deployments')
+      setExpandedDeploy(dep.id)
       await load()
-    } finally {
+      // Poll for completion so status updates in real-time
+      const pollInterval = setInterval(async () => {
+        try {
+          const deps = await listDeployments(id)
+          setDeployments(deps)
+          const latest = deps.find(d => d.id === dep.id)
+          if (latest && latest.status !== 'building' && latest.status !== 'deploying') {
+            clearInterval(pollInterval)
+            setDeploying(false)
+            const p = await getProject(id)
+            setProject(p)
+          }
+        } catch { clearInterval(pollInterval); setDeploying(false) }
+      }, 3000)
+    } catch {
       setDeploying(false)
     }
   }
 
   const handleDelete = async () => {
-    if (!id || !confirm('Delete this project? This cannot be undone.')) return
+    if (!id) return
     await deleteProject(id)
     navigate('/')
   }
@@ -159,16 +325,56 @@ export function ProjectDetail() {
               </span>
             )}
           </div>
+          {/* Project URL */}
+          {project.status === 'healthy' && (
+            <div className="flex items-center gap-2 mt-2">
+              {domains.length > 0 ? (
+                domains.map(d => (
+                  <a key={d.id} href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-success/10 text-success border border-success/20 rounded-md hover:bg-success/20 transition-colors">
+                    <Globe className="w-3 h-3" />{d.domain}<ExternalLink className="w-3 h-3" />
+                  </a>
+                ))
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-surface-200 text-gray-400 border border-surface-300 rounded-md">
+                  <Globe className="w-3 h-3" />mypaas-{project.name}:3000
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
+          {project.status === 'stopped' ? (
+            <button
+              onClick={async () => { await startProject(id!); await load() }}
+              className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-sm font-medium hover:bg-success/80 transition-colors"
+            ><Play className="w-4 h-4" /> Start</button>
+          ) : (
+            <>
+              <button
+                onClick={async () => { await restartProject(id!); await load() }}
+                className="flex items-center gap-2 px-3 py-2 text-gray-400 border border-surface-300 rounded-lg text-sm
+                           hover:bg-surface-100 hover:text-gray-200 transition-colors"
+              ><RefreshCw className="w-4 h-4" /> Restart</button>
+              <button
+                onClick={async () => { await stopProject(id!); await load() }}
+                className="flex items-center gap-2 px-3 py-2 text-warning border border-warning/30 rounded-lg text-sm
+                           hover:bg-warning/10 transition-colors"
+              ><Square className="w-3.5 h-3.5" /> Stop</button>
+            </>
+          )}
           <button
             onClick={handleDeploy}
             disabled={deploying}
             className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
-                       hover:bg-accent-hover disabled:opacity-50 transition-colors"
+                       hover:bg-accent-hover disabled:opacity-70 transition-colors"
           >
-            <Rocket className="w-4 h-4" /> {deploying ? 'Deploying...' : 'Deploy'}
+            {deploying ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+            ) : (
+              <><Rocket className="w-4 h-4" /> Deploy</>
+            )}
           </button>
         </div>
       </div>
@@ -191,57 +397,57 @@ export function ProjectDetail() {
       </div>
 
       {/* Tab content */}
-      {tab === 'deployments' && (
-        <div className="space-y-3">
-          {deployments.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No deployments yet. Click Deploy to get started.
-            </div>
-          ) : (
-            deployments.map((d) => (
-              <div key={d.id} className="bg-surface-50 border border-surface-300 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setExpandedDeploy(expandedDeploy === d.id ? null : d.id)}
-                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-surface-100 transition-colors"
-                >
-                  <StatusBadge status={d.status} />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-mono text-gray-300 truncate block">
-                      {d.commit_hash ? `${d.commit_hash.slice(0, 7)} — ${d.commit_msg || 'No message'}` : d.id.slice(0, 8)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500 shrink-0">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {d.started_at && d.finished_at ? duration(d.started_at, d.finished_at) : '—'}
-                    </span>
-                    <span>{timeAgo(d.created_at)}</span>
-                    <span className="px-1.5 py-0.5 bg-surface-200 rounded text-xs">{d.trigger}</span>
-                    {expandedDeploy === d.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </div>
-                </button>
-
-                {expandedDeploy === d.id && (
-                  <div className="border-t border-surface-300 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs text-gray-500">Deployment Logs</span>
-                      {d.status === 'healthy' && d.image_tag && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleRollback(d.id) }}
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-warning border border-warning/30 rounded hover:bg-warning/10 transition-colors"
-                        >
-                          <RotateCcw className="w-3 h-3" /> Rollback to this
-                        </button>
-                      )}
+      {tab === 'deployments' && (() => {
+        const activeDeployment = deployments.find(d => d.status === 'healthy')
+        const historyDeployments = deployments.filter(d => d !== activeDeployment)
+        return (
+          <div className="space-y-6">
+            {deployments.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                No deployments yet. Click Deploy to get started.
+              </div>
+            ) : (
+              <>
+                {/* Active Deployment */}
+                {activeDeployment && (
+                  <DeploymentRow
+                    d={activeDeployment}
+                    isActive
+                    expanded={expandedDeploy === activeDeployment.id}
+                    onToggle={() => setExpandedDeploy(expandedDeploy === activeDeployment.id ? null : activeDeployment.id)}
+                    onRollback={handleRollback}
+                    onRedeploy={() => handleDeploy()}
+                    projectId={project.id}
+                  />
+                )}
+                {/* History */}
+                {historyDeployments.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">History</span>
+                      <div className="flex-1 border-t border-surface-300" />
                     </div>
-                    <LogViewer deploymentId={d.id} />
+                    <div className="space-y-2">
+                      {historyDeployments.map((d) => (
+                        <DeploymentRow
+                          key={d.id}
+                          d={d}
+                          isActive={false}
+                          expanded={expandedDeploy === d.id}
+                          onToggle={() => setExpandedDeploy(expandedDeploy === d.id ? null : d.id)}
+                          onRollback={handleRollback}
+                          onRedeploy={() => handleDeploy()}
+                          projectId={project.id}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
+              </>
+            )}
+          </div>
+        )
+      })()}
 
       {tab === 'env' && (
         <EnvEditor projectId={project.id} envVars={envVars} onUpdate={load} />
@@ -469,12 +675,20 @@ export function ProjectDetail() {
           <div className="border-t border-surface-300 pt-6">
             <h3 className="text-sm font-medium text-danger mb-2">Danger Zone</h3>
             <button
-              onClick={handleDelete}
+              onClick={() => setShowDeleteModal(true)}
               className="flex items-center gap-2 px-4 py-2 text-sm text-danger border border-danger/30 rounded-lg hover:bg-danger/10 transition-colors"
             >
               <Trash2 className="w-4 h-4" /> Delete Project
             </button>
           </div>
+
+          {showDeleteModal && (
+            <DeleteModal
+              projectName={project.name}
+              onConfirm={handleDelete}
+              onCancel={() => setShowDeleteModal(false)}
+            />
+          )}
         </div>
       )}
     </div>

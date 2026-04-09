@@ -12,19 +12,48 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	driver string // "sqlite" or "postgres"
 }
 
+// New creates a Store with SQLite (backward compatible).
 func New(dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, driver: "sqlite"}
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return s, nil
+}
+
+// NewPostgres creates a Store with PostgreSQL for enterprise deployments.
+func NewPostgres(dbURL string) (*Store, error) {
+	db, err := openPostgres(dbURL)
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{db: db, driver: "postgres"}
+	if err := s.migratePostgres(); err != nil {
+		return nil, fmt.Errorf("migrate postgres: %w", err)
+	}
+	return s, nil
+}
+
+// Driver returns the database driver name ("sqlite" or "postgres").
+func (s *Store) Driver() string {
+	return s.driver
+}
+
+// placeholder returns the correct placeholder for the driver.
+// SQLite uses ?, PostgreSQL uses $1, $2, etc.
+func (s *Store) ph(n int) string {
+	if s.driver == "postgres" {
+		return fmt.Sprintf("$%d", n)
+	}
+	return "?"
 }
 
 func (s *Store) Close() error {

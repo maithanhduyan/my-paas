@@ -127,6 +127,60 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource, resource_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_volumes_project ON volumes(project_id)`,
+		// Enterprise tables
+		`CREATE TABLE IF NOT EXISTS organizations (
+			id              TEXT PRIMARY KEY,
+			name            TEXT UNIQUE NOT NULL,
+			slug            TEXT UNIQUE NOT NULL,
+			max_projects    INTEGER DEFAULT 0,
+			max_services    INTEGER DEFAULT 0,
+			max_cpu         REAL DEFAULT 0,
+			max_memory      INTEGER DEFAULT 0,
+			max_deployments INTEGER DEFAULT 0,
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS org_members (
+			id      TEXT PRIMARY KEY,
+			org_id  TEXT REFERENCES organizations(id),
+			user_id TEXT REFERENCES users(id),
+			role    TEXT DEFAULT 'member',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(org_id, user_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS notification_channels (
+			id         TEXT PRIMARY KEY,
+			org_id     TEXT DEFAULT '',
+			name       TEXT NOT NULL,
+			type       TEXT NOT NULL,
+			config     TEXT NOT NULL DEFAULT '{}',
+			enabled    BOOLEAN DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS notification_rules (
+			id         TEXT PRIMARY KEY,
+			channel_id TEXT REFERENCES notification_channels(id),
+			event      TEXT NOT NULL,
+			project_id TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(channel_id, event, project_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id          TEXT PRIMARY KEY,
+			user_id     TEXT REFERENCES users(id),
+			name        TEXT NOT NULL,
+			key_hash    TEXT UNIQUE NOT NULL,
+			key_prefix  TEXT NOT NULL,
+			scopes      TEXT DEFAULT '*',
+			last_used   DATETIME,
+			expires_at  DATETIME,
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_notification_rules_channel ON notification_rules(channel_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -140,6 +194,7 @@ func (s *Store) migrate() error {
 	s.db.Exec(`ALTER TABLE projects ADD COLUMN mem_limit INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE projects ADD COLUMN replicas INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE projects ADD COLUMN created_by TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE projects ADD COLUMN org_id TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'admin'`)
 
 	return nil
