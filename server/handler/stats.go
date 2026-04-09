@@ -57,7 +57,10 @@ func (h *Handler) GetProjectStats(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "project not found"})
 	}
 
-	containerID, _ := h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+"-")
+	containerID, _ := h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+".")
+	if containerID == "" {
+		containerID, _ = h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+"-")
+	}
 	if containerID == "" {
 		return c.JSON(fiber.Map{"status": "no_container"})
 	}

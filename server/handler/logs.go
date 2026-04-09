@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +20,11 @@ func (h *Handler) StreamProjectLogs(c *fiber.Ctx) error {
 	}
 
 	// Find running container for this project
-	containerID, _ := h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+"-")
+	containerID, _ := h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+".")
+	if containerID == "" {
+		// Fallback: try with dash separator for non-swarm containers
+		containerID, _ = h.Docker.FindContainerByName(c.Context(), "mypaas-"+project.Name+"-")
+	}
 	if containerID == "" {
 		return c.Status(404).JSON(fiber.Map{"error": "no running container found"})
 	}
@@ -32,7 +37,8 @@ func (h *Handler) StreamProjectLogs(c *fiber.Ctx) error {
 	c.Set("Transfer-Encoding", "chunked")
 
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		reader, err := h.Docker.GetContainerLogs(c.Context(), containerID, true, tail)
+		ctx := context.Background()
+		reader, err := h.Docker.GetContainerLogs(ctx, containerID, true, tail)
 		if err != nil {
 			fmt.Fprintf(w, "data: {\"error\": \"%s\"}\n\n", err.Error())
 			w.Flush()
@@ -42,12 +48,16 @@ func (h *Handler) StreamProjectLogs(c *fiber.Ctx) error {
 
 		scanner := bufio.NewScanner(reader)
 		for scanner.Scan() {
-			line := scanner.Text()
-			// Skip empty lines
-			if strings.TrimSpace(line) == "" {
+			line := scanner.Bytes()
+			// Docker multiplexed log lines have an 8-byte header; strip it
+			if len(line) > 8 && (line[0] == 1 || line[0] == 2) && line[1] == 0 && line[2] == 0 && line[3] == 0 {
+				line = line[8:]
+			}
+			text := strings.TrimSpace(string(line))
+			if text == "" {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", line)
+			fmt.Fprintf(w, "data: %s\n\n", text)
 			w.Flush()
 		}
 	})

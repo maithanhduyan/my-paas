@@ -3,6 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: deploy-mypaas:latest
     container_name: mypaas-server
     restart: unless-stopped
     ports:

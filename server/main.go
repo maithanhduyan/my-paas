@@ -118,6 +118,11 @@ func main() {
 	protected.Get("/deployments/:id", h.GetDeployment)
 	protected.Post("/deployments/:id/rollback", h.RollbackDeployment)
 
+	// Project container actions
+	protected.Post("/projects/:id/restart", h.RestartProject)
+	protected.Post("/projects/:id/stop", h.StopProject)
+	protected.Post("/projects/:id/start", h.StartProject)
+
 	// Environment
 	protected.Get("/projects/:id/env", h.GetEnvVars)
 	protected.Put("/projects/:id/env", h.UpdateEnvVars)

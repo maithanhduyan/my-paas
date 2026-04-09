@@ -437,6 +437,17 @@ func (c *Client) UpdateSwarmService(ctx context.Context, serviceID string, image
 	return err
 }
 
+// ScaleSwarmService sets the replica count of a Swarm service (supports 0 for stop).
+func (c *Client) ScaleSwarmService(ctx context.Context, serviceID string, replicas uint64) error {
+	svc, _, err := c.cli.ServiceInspectWithRaw(ctx, serviceID, types.ServiceInspectOptions{})
+	if err != nil {
+		return err
+	}
+	svc.Spec.Mode.Replicated.Replicas = &replicas
+	_, err = c.cli.ServiceUpdate(ctx, serviceID, svc.Version, svc.Spec, types.ServiceUpdateOptions{})
+	return err
+}
+
 // UpdateSwarmServiceLabels updates labels on a Swarm service (used for Traefik routing).
 func (c *Client) UpdateSwarmServiceLabels(ctx context.Context, serviceID string, labels map[string]string) error {
 	svc, _, err := c.cli.ServiceInspectWithRaw(ctx, serviceID, types.ServiceInspectOptions{})
