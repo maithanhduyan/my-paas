@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/my-paas/server/docker"
 	"github.com/my-paas/server/model"
 )
 
@@ -167,6 +170,10 @@ func (h *Handler) DeployTemplate(c *fiber.Ctx) error {
 			if err != nil {
 				return c.Status(500).JSON(fiber.Map{"error": "failed to create service: " + err.Error()})
 			}
+
+			// Auto-start the database/service after creation
+			go h.autoStartService(svc)
+
 			createdServices = append(createdServices, svc)
 		}
 	}
@@ -177,4 +184,60 @@ func (h *Handler) DeployTemplate(c *fiber.Ctx) error {
 		"template": template.Name,
 		"created":  createdServices,
 	})
+}
+
+// autoStartService pulls the image and starts the container for a backing service.
+// Runs in a goroutine so the deploy API responds quickly.
+func (h *Handler) autoStartService(svc *model.Service) {
+	ctx := context.Background()
+
+	_, defaultEnv, port := model.ServiceDefaults(svc.Type)
+	containerName := "mypaas-svc-" + svc.Name
+
+	// Pull image
+	if err := h.Docker.PullImage(ctx, svc.Image); err != nil {
+		h.Store.UpdateServiceStatus(svc.ID, "error", "")
+		return
+	}
+
+	labels := map[string]string{
+		"mypaas.service": svc.ID,
+		"mypaas.type":    string(svc.Type),
+	}
+
+	if h.Docker.IsSwarmActive(ctx) {
+		envMap := make(map[string]string)
+		for k, v := range defaultEnv {
+			envMap[k] = v
+		}
+		serviceID, err := h.Docker.CreateSwarmService(ctx, docker.SwarmServiceOpts{
+			Name:     containerName,
+			Image:    svc.Image,
+			Env:      envMap,
+			Labels:   labels,
+			Network:  serviceNetwork,
+			Replicas: 1,
+		})
+		if err != nil {
+			h.Store.UpdateServiceStatus(svc.ID, "error", "")
+			return
+		}
+		h.Store.UpdateServiceStatus(svc.ID, "running", serviceID)
+		return
+	}
+
+	// Container mode
+	containerID, err := h.Docker.RunContainer(ctx, docker.RunContainerOpts{
+		Name:    containerName,
+		Image:   svc.Image,
+		Env:     defaultEnv,
+		Ports:   []string{port},
+		Network: serviceNetwork,
+		Labels:  labels,
+	})
+	if err != nil {
+		h.Store.UpdateServiceStatus(svc.ID, "error", "")
+		return
+	}
+	h.Store.UpdateServiceStatus(svc.ID, "running", containerID)
 }

@@ -11,6 +11,7 @@ import type { Project, Deployment, EnvVar, ContainerStats, Domain, Volume } from
 import { StatusBadge } from '../components/StatusBadge'
 import { LogViewer } from '../components/LogViewer'
 import { EnvEditor } from '../components/EnvEditor'
+import { ProjectArchitecture } from '../components/ProjectArchitecture'
 import { timeAgo, duration } from '../lib/utils'
 import {
   ArrowLeft, Rocket, Trash2, GitBranch, Clock,
@@ -18,7 +19,7 @@ import {
   ExternalLink, AlertTriangle, Loader2, MoreVertical, Play, Square, RefreshCw
 } from 'lucide-react'
 
-type Tab = 'deployments' | 'env' | 'volumes' | 'settings'
+type Tab = 'deployments' | 'architecture' | 'env' | 'volumes' | 'settings'
 
 /* ─── Deployment Status Badge (ACTIVE / REMOVED / building etc) ─── */
 function DeployBadge({ status, isActive }: { status: string; isActive: boolean }) {
@@ -381,7 +382,7 @@ export function ProjectDetail() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-surface-300">
-        {(['deployments', 'env', 'volumes', 'settings'] as Tab[]).map((t) => (
+        {(['deployments', 'architecture', 'env', 'volumes', 'settings'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -391,7 +392,7 @@ export function ProjectDetail() {
                 : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            {t === 'deployments' ? `Deployments (${deployments.length})` : t === 'env' ? `Env Vars (${envVars.length})` : t === 'volumes' ? `Volumes (${volumes.length})` : 'Settings'}
+            {t === 'deployments' ? `Deployments (${deployments.length})` : t === 'architecture' ? 'Architecture' : t === 'env' ? `Env Vars (${envVars.length})` : t === 'volumes' ? `Volumes (${volumes.length})` : 'Settings'}
           </button>
         ))}
       </div>
@@ -448,6 +449,10 @@ export function ProjectDetail() {
           </div>
         )
       })()}
+
+      {tab === 'architecture' && (
+        <ProjectArchitecture project={project} onUpdate={load} />
+      )}
 
       {tab === 'env' && (
         <EnvEditor projectId={project.id} envVars={envVars} onUpdate={load} />

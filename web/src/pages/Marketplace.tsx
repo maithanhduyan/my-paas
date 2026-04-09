@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { listTemplates, deployTemplate } from '../api'
 import type { Template } from '../types'
 import { Package, Rocket, Loader2, Server, Database, Zap, HardDrive, Globe } from 'lucide-react'
+import { Modal } from '../components/ui/Modal'
+import { useToast } from '../components/ui/Toast'
 
 const iconMap: Record<string, React.ReactNode> = {
   globe: <Globe className="w-6 h-6" />,
@@ -15,6 +18,10 @@ export function Marketplace() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [deploying, setDeploying] = useState<string | null>(null)
+  const [deployModal, setDeployModal] = useState<Template | null>(null)
+  const [projectName, setProjectName] = useState('')
+  const navigate = useNavigate()
+  const { toast } = useToast()
 
   const load = useCallback(async () => {
     try {
@@ -28,16 +35,34 @@ export function Marketplace() {
 
   useEffect(() => { load() }, [load])
 
-  const handleDeploy = async (template: Template) => {
-    const name = prompt('Project name (leave blank for default):', template.name)
-    if (name === null) return
+  const openDeployModal = (template: Template) => {
+    setProjectName(template.name)
+    setDeployModal(template)
+  }
+
+  const handleDeploy = async () => {
+    if (!deployModal) return
+    const template = deployModal
+    setDeployModal(null)
 
     setDeploying(template.id)
     try {
-      await deployTemplate(template.id, name || undefined)
-      alert(`Template "${template.name}" deployed successfully!`)
+      await deployTemplate(template.id, projectName || undefined)
+      toast({
+        type: 'success',
+        title: `"${template.name}" deployed successfully!`,
+        description: 'Redirecting to dashboard...',
+        duration: 3000,
+      })
+      // Navigate to dashboard after short delay
+      setTimeout(() => navigate('/'), 1500)
     } catch (e: any) {
-      alert('Deploy failed: ' + e.message)
+      toast({
+        type: 'error',
+        title: 'Deploy failed',
+        description: e.message,
+        duration: 6000,
+      })
     } finally {
       setDeploying(null)
     }
@@ -94,7 +119,7 @@ export function Marketplace() {
               </div>
 
               <button
-                onClick={() => handleDeploy(t)}
+                onClick={() => openDeployModal(t)}
                 disabled={deploying === t.id}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
               >
@@ -109,6 +134,59 @@ export function Marketplace() {
           ))}
         </div>
       )}
+
+      {/* Deploy Modal */}
+      <Modal
+        open={!!deployModal}
+        onClose={() => setDeployModal(null)}
+        title={`Deploy ${deployModal?.name ?? ''}`}
+        description="Choose a name for your project. Environment variables and services will be auto-configured."
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5">Project Name</label>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleDeploy() }}
+              className="input-field"
+              placeholder={deployModal?.name ?? 'my-project'}
+              autoFocus
+            />
+          </div>
+          {deployModal && (
+            <div className="text-xs text-gray-500">
+              <p className="mb-1.5">This template includes:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {deployModal.services.map((s) => (
+                  <span
+                    key={s.name}
+                    className="px-2 py-0.5 rounded border border-surface-300 bg-surface text-gray-400"
+                  >
+                    {s.type === 'app' ? '🚀 ' + s.name : '🗄️ ' + s.type}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2 justify-end pt-2">
+            <button
+              onClick={() => setDeployModal(null)}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 rounded-lg hover:bg-surface-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDeploy}
+              className="flex items-center gap-2 px-5 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-hover transition-colors"
+            >
+              <Rocket className="w-4 h-4" />
+              Deploy
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

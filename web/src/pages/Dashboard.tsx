@@ -4,9 +4,10 @@ import { listProjects, getHealth } from '../api'
 import type { Project, HealthResponse } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { timeAgo } from '../lib/utils'
-import { GitBranch, Plus, Server, Activity, Search } from 'lucide-react'
+import { GitBranch, Plus, Server, Activity, Search, LayoutGrid, List } from 'lucide-react'
 
 type StatusFilter = 'all' | 'healthy' | 'failed' | 'building'
+type ViewMode = 'grid' | 'list'
 
 export function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -14,6 +15,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [viewMode, setViewMode] = useState<ViewMode>('grid')
 
   useEffect(() => {
     Promise.all([
@@ -42,7 +44,7 @@ export function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <h1 className="text-2xl font-bold">Projects</h1>
           <p className="text-sm text-gray-500 mt-1">
             {projects.length} project{projects.length !== 1 ? 's' : ''} deployed
           </p>
@@ -51,7 +53,7 @@ export function Dashboard() {
           to="/projects/new"
           className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-hover transition-colors"
         >
-          <Plus className="w-4 h-4" /> New Project
+          <Plus className="w-4 h-4" /> New
         </Link>
       </div>
 
@@ -95,6 +97,25 @@ export function Dashboard() {
               </button>
             ))}
           </div>
+          {/* View mode toggle */}
+          <div className="flex gap-0.5 bg-surface-50 border border-surface-300 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-md transition-colors ${
+                viewMode === 'grid' ? 'bg-surface-200 text-white' : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`p-1.5 rounded-md transition-colors ${
+                viewMode === 'list' ? 'bg-surface-200 text-white' : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -111,14 +132,61 @@ export function Dashboard() {
             <Plus className="w-4 h-4" /> New Project
           </Link>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          No projects match your search.
+        </div>
+      ) : viewMode === 'grid' ? (
+        /* ─── Grid view (Railway-style cards) ─── */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map((p) => (
+            <Link
+              key={p.id}
+              to={`/projects/${p.id}`}
+              className="group p-5 bg-surface-50 border border-surface-300 rounded-xl
+                         hover:border-accent/40 hover:shadow-lg hover:shadow-accent/5
+                         transition-all duration-200"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0"
+                    style={{ background: providerBg(p.provider) }}
+                  >
+                    {providerEmoji(p.provider)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate group-hover:text-accent-hover transition-colors">
+                      {p.name}
+                    </div>
+                    {p.provider && (
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        {p.provider}{p.framework ? ` / ${p.framework}` : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <StatusBadge status={p.status} />
+                <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                  {p.git_url && (
+                    <span className="flex items-center gap-1">
+                      <GitBranch className="w-3 h-3" />
+                      {p.branch || 'main'}
+                    </span>
+                  )}
+                  <span>{timeAgo(p.updated_at)}</span>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
       ) : (
-        <div className="grid gap-3">
-          {filtered.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No projects match your search.
-            </div>
-          ) : (
-            filtered.map((p) => (
+        /* ─── List view (compact rows) ─── */
+        <div className="grid gap-2">
+          {filtered.map((p) => (
             <Link
               key={p.id}
               to={`/projects/${p.id}`}
@@ -126,7 +194,8 @@ export function Dashboard() {
                          hover:border-accent/40 hover:bg-surface-100 hover:shadow-lg hover:shadow-accent/5
                          transition-all duration-200"
             >
-              <div className="w-10 h-10 bg-surface-200 rounded-lg flex items-center justify-center text-lg">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0"
+                   style={{ background: providerBg(p.provider) }}>
                 {providerEmoji(p.provider)}
               </div>
               <div className="flex-1 min-w-0">
@@ -148,8 +217,7 @@ export function Dashboard() {
                 {timeAgo(p.updated_at)}
               </div>
             </Link>
-          ))
-          )}
+          ))}
         </div>
       )}
     </div>
@@ -167,4 +235,17 @@ function providerEmoji(provider: string): string {
     staticfile: '📄',
   }
   return map[provider] ?? '📦'
+}
+
+function providerBg(provider: string): string {
+  const map: Record<string, string> = {
+    node: '#22c55e15',
+    go: '#00ADD815',
+    python: '#3572A515',
+    rust: '#DEA58415',
+    php: '#777BB415',
+    java: '#ED8B0015',
+    staticfile: '#6366f115',
+  }
+  return map[provider] ?? '#6366f110'
 }
